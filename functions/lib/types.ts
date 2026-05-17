@@ -10,7 +10,11 @@ import type {
   ParsedFile,
   Dependency,
   RepoMetrics,
-  FileType
+  FileType,
+  LayoutData,
+  LayoutNode,
+  LayoutEdge,
+  District
 } from '../../src/types/index';
 
 // Re-export shared types for convenience
@@ -21,7 +25,11 @@ export type {
   ParsedFile,
   Dependency,
   RepoMetrics,
-  FileType
+  FileType,
+  LayoutData,
+  LayoutNode,
+  LayoutEdge,
+  District
 };
 
 /**
