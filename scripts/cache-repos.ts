@@ -1,168 +1,105 @@
-import { Octokit } from '@octokit/rest';
-import fs from 'fs/promises';
-import path from 'path';
+/**
+ * Pre-cache demo repositories for faster loading
+ * Run with: pnpm tsx scripts/cache-repos.ts
+ * Requires GITHUB_TOKEN in .dev.vars
+ */
 
-const REPOS = [
-  { owner: 'shadcn', repo: 'ui' },
-  { owner: 'honojs', repo: 'hono' },
-  { owner: 'drizzle-team', repo: 'drizzle-orm' },
+import { writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+
+const DEMO_REPOS = [
+  { owner: 'shadcn-ui', repo: 'ui', branch: 'main' },
+  { owner: 'honojs', repo: 'hono', branch: 'main' },
+  { owner: 'drizzle-team', repo: 'drizzle-orm', branch: 'main' },
 ];
 
-interface RepoManifest {
-  metadata: {
-    owner: string;
-    repo: string;
-    branch: string;
-    defaultBranch: string;
-    description: string;
-    stars: number;
-    lastCommitDate: string;
-  };
-  tree: Array<{
-    path: string;
-    type: 'file' | 'dir';
-    size: number;
-    sha: string;
-  }>;
-}
+const API_BASE = process.env.API_BASE || 'http://localhost:8788';
+const CACHE_DIR = join(process.cwd(), 'public', 'cache');
 
-async function cacheRepo(owner: string, repo: string): Promise<void> {
-  const token = process.env.GITHUB_TOKEN;
-  
-  if (!token) {
-    throw new Error('GITHUB_TOKEN environment variable is required');
-  }
-
-  const octokit = new Octokit({ auth: token });
-  
-  console.log(`📦 Fetching ${owner}/${repo}...`);
+async function cacheRepo(owner: string, repo: string, branch: string) {
+  console.log(`\n📦 Caching ${owner}/${repo}...`);
 
   try {
-    // Fetch repo metadata
-    const { data: repoData } = await octokit.repos.get({ owner, repo });
-    
-    console.log(`  ✓ Metadata fetched (${repoData.stargazers_count} stars)`);
-
-    // Fetch file tree
-    const { data: treeData } = await octokit.git.getTree({
-      owner,
-      repo,
-      tree_sha: repoData.default_branch,
-      recursive: 'true',
-    });
-    
-    console.log(`  ✓ Tree fetched (${treeData.tree.length} items)`);
-
-    // Filter to only include files (blobs) and exclude common patterns
-    const filteredTree = treeData.tree
-      .filter(node => {
-        if (node.type !== 'blob') return false;
-        if (!node.path) return false;
-        
-        // Exclude common non-source files
-        const excludePatterns = [
-          /^\.git\//,
-          /node_modules\//,
-          /\.png$/i,
-          /\.jpg$/i,
-          /\.jpeg$/i,
-          /\.gif$/i,
-          /\.svg$/i,
-          /\.ico$/i,
-          /\.woff$/i,
-          /\.woff2$/i,
-          /\.ttf$/i,
-          /\.eot$/i,
-          /\.mp4$/i,
-          /\.webm$/i,
-          /\.pdf$/i,
-          /\.zip$/i,
-          /\.tar$/i,
-          /\.gz$/i,
-        ];
-        
-        return !excludePatterns.some(pattern => pattern.test(node.path!));
-      })
-      .map(node => ({
-        path: node.path!,
-        type: 'file' as const,
-        size: node.size || 0,
-        sha: node.sha!,
-      }));
-
-    console.log(`  ✓ Filtered to ${filteredTree.length} source files`);
-
-    // Create manifest
-    const manifest: RepoManifest = {
-      metadata: {
-        owner,
-        repo,
-        branch: repoData.default_branch,
-        defaultBranch: repoData.default_branch,
-        description: repoData.description || '',
-        stars: repoData.stargazers_count,
-        lastCommitDate: repoData.pushed_at || new Date().toISOString(),
+    const response = await fetch(`${API_BASE}/api/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-      tree: filteredTree,
-    };
+      body: JSON.stringify({ owner, repo, branch }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`API request failed: ${response.status} ${error}`);
+    }
+
+    const data = await response.json();
+    const filename = `${owner}-${repo}.json`;
+    const filepath = join(CACHE_DIR, filename);
 
     // Ensure cache directory exists
-    const cacheDir = path.join(process.cwd(), 'public', 'cache');
-    await fs.mkdir(cacheDir, { recursive: true });
+    mkdirSync(CACHE_DIR, { recursive: true });
 
-    // Save to public/cache/
-    const filename = `${owner}-${repo}.json`;
-    const filepath = path.join(cacheDir, filename);
-    
-    await fs.writeFile(
-      filepath,
-      JSON.stringify(manifest, null, 2)
-    );
+    // Write to cache file
+    writeFileSync(filepath, JSON.stringify(data.layout, null, 2));
 
-    console.log(`  ✓ Cached to ${filename}`);
-    console.log(`  ✓ ${owner}/${repo} complete!\n`);
+    console.log(`✓ Cached to ${filename}`);
+    console.log(`  - ${data.layout.nodes.length} nodes`);
+    console.log(`  - ${data.layout.districts.length} districts`);
+    console.log(`  - ${data.layout.highlights.length} highlights`);
   } catch (error) {
-    if (error instanceof Error) {
-      console.error(`  ✗ Error caching ${owner}/${repo}: ${error.message}\n`);
-      throw error;
-    }
+    console.error(`✗ Failed to cache ${owner}/${repo}:`, error);
     throw error;
   }
 }
 
-async function main(): Promise<void> {
-  console.log('🚀 Starting repository caching...\n');
-  
-  const startTime = Date.now();
+async function main() {
+  console.log('🚀 Starting repository cache generation...');
+  console.log(`API Base: ${API_BASE}`);
+  console.log(`Cache Directory: ${CACHE_DIR}`);
+
+  // Check if API is running
+  try {
+    const healthCheck = await fetch(`${API_BASE}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner: 'test', repo: 'test' }),
+    });
+    
+    if (healthCheck.status === 404) {
+      throw new Error('API endpoint not found. Make sure the dev server is running.');
+    }
+  } catch (error) {
+    console.error('\n❌ Cannot connect to API. Please ensure:');
+    console.error('   1. Dev server is running: pnpm dev');
+    console.error('   2. GITHUB_TOKEN is set in .dev.vars');
+    console.error('   3. API_BASE is correct (default: http://localhost:8788)\n');
+    process.exit(1);
+  }
+
   let successCount = 0;
   let failCount = 0;
 
-  for (const { owner, repo } of REPOS) {
+  for (const { owner, repo, branch } of DEMO_REPOS) {
     try {
-      await cacheRepo(owner, repo);
+      await cacheRepo(owner, repo, branch);
       successCount++;
     } catch (error) {
       failCount++;
-      console.error(`Failed to cache ${owner}/${repo}`);
     }
   }
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  
-  console.log('─'.repeat(50));
-  console.log(`✨ Caching complete in ${duration}s`);
-  console.log(`   Success: ${successCount}/${REPOS.length}`);
-  if (failCount > 0) {
-    console.log(`   Failed: ${failCount}/${REPOS.length}`);
-  }
-  console.log('─'.repeat(50));
+  console.log('\n' + '='.repeat(50));
+  console.log(`✓ Successfully cached: ${successCount}`);
+  console.log(`✗ Failed: ${failCount}`);
+  console.log('='.repeat(50));
 
   if (failCount > 0) {
     process.exit(1);
   }
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });

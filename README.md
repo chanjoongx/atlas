@@ -50,10 +50,34 @@ cp .env.example .dev.vars
 # Required scope: public_repo
 ```
 
-4. Cache demo repositories (optional):
+4. Cache demo repositories (optional but recommended):
+
+**Why cache?** Pre-caching demo repositories provides instant loading without API calls, perfect for demos and development.
+
 ```bash
-GITHUB_TOKEN=your_token_here pnpm cache-repos
+# Start the dev server first (in one terminal)
+pnpm dev
+
+# Then in another terminal, run the cache script
+pnpm tsx scripts/cache-repos.ts
 ```
+
+**What it does:**
+- Analyzes 3 demo repos (shadcn/ui, hono, drizzle-orm)
+- Saves AnnotatedLayout JSON to `public/cache/`
+- Frontend tries cache first, falls back to API if not found
+
+**Requirements:**
+- Dev server must be running (`pnpm dev`)
+- `GITHUB_TOKEN` set in `.dev.vars`
+- Takes ~2-3 minutes for all 3 repos
+
+**Output files:**
+- `public/cache/shadcn-ui-ui.json`
+- `public/cache/honojs-hono.json`
+- `public/cache/drizzle-team-drizzle-orm.json`
+
+These files are served as static assets and loaded instantly by the frontend.
 
 ### Development
 
