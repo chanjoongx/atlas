@@ -35,8 +35,19 @@ interface RepoInputProps {
 
 export function RepoInput({ onAnalyze, loading }: RepoInputProps) {
   const [selectedRepo, setSelectedRepo] = useState<DemoRepo | null>(null);
+  const [customInput, setCustomInput] = useState('');
 
   const handleAnalyze = () => {
+    // Custom input takes precedence over the demo dropdown
+    const trimmed = customInput.trim();
+    if (trimmed) {
+      const parts = trimmed.split('/').map(s => s.trim()).filter(Boolean);
+      if (parts.length === 2) {
+        onAnalyze(parts[0], parts[1]);
+        return;
+      }
+      return; // invalid format — button is disabled in this case anyway
+    }
     if (selectedRepo) {
       onAnalyze(selectedRepo.owner, selectedRepo.repo);
     }
@@ -56,6 +67,7 @@ export function RepoInput({ onAnalyze, loading }: RepoInputProps) {
             const [owner, repo] = e.target.value.split('/');
             const found = DEMO_REPOS.find((r) => r.owner === owner && r.repo === repo);
             setSelectedRepo(found || null);
+            if (found) setCustomInput(''); // clear custom when a demo is picked
           }}
           className="px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           disabled={loading}
@@ -69,29 +81,35 @@ export function RepoInput({ onAnalyze, loading }: RepoInputProps) {
         </select>
       </div>
 
-      {/* Custom Repo Input (Disabled for MVP) */}
-      <div className="flex flex-col gap-2 opacity-50">
+      {/* Custom Repo Input */}
+      <div className="flex flex-col gap-2">
         <label htmlFor="custom-repo" className="text-sm font-medium text-slate-300">
           Or enter a custom repository
         </label>
-        <div className="relative">
-          <input
-            id="custom-repo"
-            type="text"
-            placeholder="owner/repo"
-            className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-not-allowed"
-            disabled
-          />
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 bg-slate-900 px-2 py-1 rounded">
-            Coming in v2
-          </div>
-        </div>
+        <input
+          id="custom-repo"
+          type="text"
+          placeholder="owner/repo (e.g., facebook/react)"
+          value={customInput}
+          onChange={(e) => {
+            setCustomInput(e.target.value);
+            // Clear demo selection when user starts typing (avoid ambiguity)
+            if (e.target.value.trim()) {
+              setSelectedRepo(null);
+            }
+          }}
+          disabled={loading}
+          className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+        <p className="text-xs text-slate-500">
+          Any public GitHub repo. Larger repos may take longer to analyze.
+        </p>
       </div>
 
       {/* Analyze Button */}
       <button
         onClick={handleAnalyze}
-        disabled={!selectedRepo || loading}
+        disabled={!selectedRepo && customInput.trim().split('/').filter(Boolean).length !== 2 || loading}
         className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-950"
       >
         {loading ? (
