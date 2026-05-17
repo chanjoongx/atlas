@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Env / secrets
+.env
+.env.*
+*.key
+*.pem
+secrets/
+config/credentials.json
+
+# Build output
+dist/
+build/
+.next/
+.turbo/
+.wrangler/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Python (혹시 필요)
+__pycache__/
+*.pyc
+.venv/
+venv/
