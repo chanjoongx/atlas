@@ -11,9 +11,17 @@ export async function exportAsPNG(
     const width = bbox.width;
     const height = bbox.height;
 
-    // Serialize SVG to string
+    // Clone SVG and reset zoom transform so PNG shows full content
+    // (don't mutate the live element so user's on-screen view stays as-is)
+    const clone = svgElement.cloneNode(true) as SVGSVGElement;
+    const mainGroup = clone.querySelector('.main-group');
+    if (mainGroup) {
+      mainGroup.removeAttribute('transform');
+    }
+
+    // Serialize cloned SVG to string
     const serializer = new XMLSerializer();
-    let svgString = serializer.serializeToString(svgElement);
+    let svgString = serializer.serializeToString(clone);
 
     // Ensure SVG has proper namespace and dimensions
     if (!svgString.includes('xmlns="http://www.w3.org/2000/svg"')) {
