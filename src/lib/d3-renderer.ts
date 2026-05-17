@@ -1,9 +1,13 @@
 import * as d3 from 'd3';
 import type { AnnotatedLayout, LayoutNode, LayoutEdge } from '../types';
 
-const COLORS = d3.schemeTableau10;
+const COLORS = [
+  '#60a5fa', '#34d399', '#f472b6', '#fbbf24', '#a78bfa',
+  '#22d3ee', '#fb923c', '#4ade80', '#f87171', '#c084fc'
+];
 const BACKGROUND_COLOR = '#0a0e1a';
-const DISTRICT_OPACITY = 0.12;
+const DISTRICT_OPACITY = 0.28;
+const DISTRICT_STROKE_OPACITY = 0.6;
 const EDGE_OPACITY = 0.3;
 const NODE_RADIUS = 4;
 const ENTRY_NODE_SCALE = 1.5;
@@ -121,15 +125,23 @@ export function renderCityMap(
   const minY = Math.min(...allY);
   const maxY = Math.max(...allY);
 
-  const padding = 50;
-  const xScale = d3
-    .scaleLinear()
-    .domain([minX, maxX])
-    .range([padding, width - padding]);
-  const yScale = d3
-    .scaleLinear()
-    .domain([minY, maxY])
-    .range([padding, height - padding]);
+  const layoutWidth = maxX - minX || 1;
+  const layoutHeight = maxY - minY || 1;
+
+  const padding = 60;
+  const availableWidth = width - padding * 2;
+  const availableHeight = height - padding * 2;
+
+  const scale = Math.min(
+    availableWidth / layoutWidth,
+    availableHeight / layoutHeight
+  );
+
+  const offsetX = (width - layoutWidth * scale) / 2;
+  const offsetY = (height - layoutHeight * scale) / 2;
+
+  const tx = (x: number) => (x - minX) * scale + offsetX;
+  const ty = (y: number) => (y - minY) * scale + offsetY;
 
   // Render districts as background regions
   const districtGroup = g.append('g').attr('class', 'districts');
@@ -139,13 +151,38 @@ export function renderCityMap(
 
     districtGroup
       .append('rect')
-      .attr('x', xScale(bounds.x))
-      .attr('y', yScale(bounds.y))
-      .attr('width', xScale(bounds.x + bounds.width) - xScale(bounds.x))
-      .attr('height', yScale(bounds.y + bounds.height) - yScale(bounds.y))
+      .attr('x', tx(bounds.x))
+      .attr('y', ty(bounds.y))
+      .attr('width', bounds.width * scale)
+      .attr('height', bounds.height * scale)
       .attr('fill', color)
       .attr('opacity', DISTRICT_OPACITY)
-      .attr('rx', 8);
+      .attr('stroke', color)
+      .attr('stroke-opacity', DISTRICT_STROKE_OPACITY)
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '4 4')
+      .attr('rx', 12);
+  });
+
+  // Render district labels
+  const districtLabelGroup = g.append('g').attr('class', 'district-labels');
+  layout.districts.forEach((district) => {
+    const color = districtColorMap.get(district.name) || '#888';
+    const bounds = district.bounds;
+    const centerX = tx(bounds.x + bounds.width / 2);
+    const centerY = ty(bounds.y) - 8;
+
+    districtLabelGroup
+      .append('text')
+      .attr('x', centerX)
+      .attr('y', centerY)
+      .attr('text-anchor', 'middle')
+      .attr('fill', color)
+      .attr('font-size', '13px')
+      .attr('font-weight', '700')
+      .attr('letter-spacing', '0.05em')
+      .style('text-shadow', '0 1px 3px rgba(0,0,0,0.8)')
+      .text(district.name.toUpperCase());
   });
 
   // Render edges
@@ -165,8 +202,8 @@ export function renderCityMap(
     edgeGroup
       .append('path')
       .attr('d', link({
-        source: { x: xScale(source.x), y: yScale(source.y) },
-        target: { x: xScale(target.x), y: yScale(target.y) },
+        source: { x: tx(source.x), y: ty(source.y) },
+        target: { x: tx(target.x), y: ty(target.y) },
       } as any))
       .attr('fill', 'none')
       .attr('stroke', sourceColor)
@@ -183,15 +220,16 @@ export function renderCityMap(
     const isCore = node.highlightTypes.has('core');
     const isHotspot = node.highlightTypes.has('hotspot');
 
-    const size = isEntry ? 12 * ENTRY_NODE_SCALE : 12;
+    const nodeWidth = (isEntry ? node.width * ENTRY_NODE_SCALE : node.width) * scale;
+    const nodeHeight = (isEntry ? node.height * ENTRY_NODE_SCALE : node.height) * scale;
     const saturation = node.highlightTypes.size > 0 ? 1.0 : 0.6;
 
     const nodeEl = nodeGroup
       .append('rect')
-      .attr('x', xScale(node.x) - size / 2)
-      .attr('y', yScale(node.y) - size / 2)
-      .attr('width', size)
-      .attr('height', size)
+      .attr('x', tx(node.x) - nodeWidth / 2)
+      .attr('y', ty(node.y) - nodeHeight / 2)
+      .attr('width', nodeWidth)
+      .attr('height', nodeHeight)
       .attr('rx', NODE_RADIUS)
       .attr('fill', d3.color(color)?.copy({ opacity: saturation }).toString() || color)
       .attr('class', 'node')
@@ -217,10 +255,10 @@ export function renderCityMap(
     if (isHotspot) {
       nodeGroup
         .append('rect')
-        .attr('x', xScale(node.x) - size / 2 - 2)
-        .attr('y', yScale(node.y) - size / 2 - 2)
-        .attr('width', size + 4)
-        .attr('height', size + 4)
+        .attr('x', tx(node.x) - nodeWidth / 2 - 2)
+        .attr('y', ty(node.y) - nodeHeight / 2 - 2)
+        .attr('width', nodeWidth + 4)
+        .attr('height', nodeHeight + 4)
         .attr('rx', NODE_RADIUS + 1)
         .attr('fill', HOTSPOT_OVERLAY)
         .attr('pointer-events', 'none');
@@ -233,7 +271,7 @@ export function renderCityMap(
           .transition()
           .duration(200)
           .attr('transform', `scale(1.05)`)
-          .attr('transform-origin', `${xScale(node.x)}px ${yScale(node.y)}px`);
+          .attr('transform-origin', `${tx(node.x)}px ${ty(node.y)}px`);
 
         // Show tooltip
         showTooltip(node, [event.clientX, event.clientY]);
@@ -248,55 +286,50 @@ export function renderCityMap(
       });
   });
 
-  // Render labels
+  // Render labels (only for highlighted nodes, max 25)
+  const highlightedNodeIds = new Set(layout.highlights.map(h => h.nodeId));
+  const filteredLabels = layout.labels
+    .filter(label => highlightedNodeIds.has(label.nodeId))
+    .slice(0, 25);
+
   const labelGroup = g.append('g').attr('class', 'labels');
-  layout.labels.forEach((label) => {
+  filteredLabels.forEach((label) => {
     const node = nodeMap.get(label.nodeId);
     if (!node) return;
 
-    // Calculate label position based on position hint
-    let labelX = xScale(node.x);
-    let labelY = yScale(node.y);
-    let anchor: 'start' | 'middle' | 'end' = 'middle';
-
-    switch (label.position) {
-      case 'top':
-        labelY -= 20;
-        break;
-      case 'bottom':
-        labelY += 25;
-        break;
-      case 'left':
-        labelX -= 20;
-        anchor = 'end';
-        break;
-      case 'right':
-        labelX += 20;
-        anchor = 'start';
-        break;
-    }
+    const labelX = tx(node.x);
+    const labelY = ty(node.y);
 
     labelGroup
       .append('text')
       .attr('x', labelX)
       .attr('y', labelY)
-      .attr('text-anchor', anchor)
+      .attr('text-anchor', 'middle')
       .attr('fill', 'white')
-      .attr('font-size', '14px')
+      .attr('font-size', '11px')
       .attr('font-weight', '600')
-      .attr('filter', 'url(#drop-shadow)')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', 'rgba(0,0,0,0.85)')
+      .attr('stroke-width', '3px')
+      .attr('stroke-linejoin', 'round')
       .text(label.text);
   });
 
   // Setup zoom and pan
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.5, 3])
+    .scaleExtent([0.3, 5])
     .on('zoom', (event) => {
       g.attr('transform', event.transform);
     });
 
   svg.call(zoom as any);
+
+  // Initial transform: identity (tx/ty already centers content correctly)
+  svg.call(zoom.transform as any, d3.zoomIdentity);
+
+  // Disable double-click zoom (prevent accidental jumps during demo)
+  svg.on('dblclick.zoom', null);
 }
 
 // Tooltip management

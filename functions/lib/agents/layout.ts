@@ -181,7 +181,7 @@ function prioritizeFiles(files: ParsedFile[], maxNodes: number): ParsedFile[] {
 
   // Prioritization strategy:
   // 1. All entry points (always include)
-  // 2. Top source files by LOC
+  // 2. Top source files by score (LOC + path quality)
   // 3. Sample remaining proportionally
 
   const selected: ParsedFile[] = [...entryPoints];
@@ -191,8 +191,31 @@ function prioritizeFiles(files: ParsedFile[], maxNodes: number): ParsedFile[] {
     return selected;
   }
 
-  // Sort source files by LOC (descending)
-  const sortedSource = [...sourceFiles].sort((a, b) => b.loc - a.loc);
+  // Score function to prioritize core components over examples/legacy
+  function scoreFile(file: ParsedFile): number {
+    let score = Math.sqrt(file.loc);  // Dampen LOC influence
+
+    const path = file.path.toLowerCase();
+    // Penalties
+    if (path.includes('example') || path.includes('examples/')) score -= 50;
+    if (path.includes('test') || path.includes('spec')) score -= 30;
+    if (path.includes('fixture') || path.includes('mock')) score -= 30;
+    if (path.includes('__')) score -= 20;
+    if (path.includes('legacy') || path.includes('deprecated')) score -= 40;
+
+    // Bonus: short filename (likely core component)
+    const fileName = path.split('/').pop() || '';
+    if (fileName.length < 15) score += 10;
+
+    // Bonus: shallow path (top-level)
+    const depth = file.path.split('/').length;
+    if (depth <= 3) score += 15;
+
+    return score;
+  }
+
+  // Sort source files by score (descending)
+  const sortedSource = [...sourceFiles].sort((a, b) => scoreFile(b) - scoreFile(a));
 
   // Take top source files
   const sourceToTake = Math.min(remaining, sortedSource.length);
@@ -398,10 +421,10 @@ function runForceSimulation(
       .radius(d => Math.max(d.width, d.height) / 2 + FORCE_COLLISION_PADDING))
     .force('x', forceX<SimNode>()
       .x(d => districtAnchors.get(d.district)?.x ?? canvasWidth / 2)
-      .strength(0.1))
+      .strength(0.25))
     .force('y', forceY<SimNode>()
       .y(d => districtAnchors.get(d.district)?.y ?? canvasHeight / 2)
-      .strength(0.1))
+      .strength(0.25))
     .stop();
 
   // Run simulation synchronously
