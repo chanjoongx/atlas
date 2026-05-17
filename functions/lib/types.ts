@@ -3,10 +3,26 @@
  * Shared types are in src/types/index.ts
  */
 
-import type { RepoManifest, FileNode } from '../../src/types/index';
+import type {
+  RepoManifest,
+  FileNode,
+  CodeStructure,
+  ParsedFile,
+  Dependency,
+  RepoMetrics,
+  FileType
+} from '../../src/types/index';
 
 // Re-export shared types for convenience
-export type { RepoManifest, FileNode };
+export type {
+  RepoManifest,
+  FileNode,
+  CodeStructure,
+  ParsedFile,
+  Dependency,
+  RepoMetrics,
+  FileType
+};
 
 /**
  * Input contract for Agent 1: Repo Ingester

@@ -1,13 +1,14 @@
 /**
  * POST /api/analyze
- * 
+ *
  * Main API endpoint for repository analysis.
- * Currently implements Agent 1 (Repo Ingester) only.
- * Future phases will add Agents 2-4 in the pipeline.
+ * Currently implements Agent 1 (Repo Ingester) and Agent 2 (Structure Parser).
+ * Future phases will add Agents 3-4 in the pipeline.
  */
 
 import { createGitHubClientFromEnv, type Env } from '../lib/github-client';
 import { ingestRepo } from '../lib/agents/ingester';
+import { parseStructure, type ParserInput } from '../lib/agents/parser';
 import type { IngesterInput } from '../lib/types';
 
 interface AnalyzeRequestBody {
@@ -85,8 +86,25 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       );
     }
 
-    // TODO: Agent 2 - Structure Parser (Phase 4)
-    // const parserResult = await parseStructure(ingesterResult.data);
+    // Agent 2: Structure Parser
+    const parserInput: ParserInput = {
+      tree: ingesterResult.data.tree,
+      owner: body.owner,
+      repo: body.repo,
+    };
+
+    const parserResult = await parseStructure(parserInput, octokit);
+
+    if (!parserResult.success) {
+      const statusCode = getStatusCodeForError(parserResult.error.code);
+      return new Response(
+        JSON.stringify({ error: parserResult.error }),
+        {
+          status: statusCode,
+          headers: CORS_HEADERS,
+        }
+      );
+    }
 
     // TODO: Agent 3 - Layout Engine (Phase 5)
     // const layoutResult = await generateLayout(parserResult.data);
@@ -94,9 +112,9 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
     // TODO: Agent 4 - Annotator (Phase 6)
     // const annotatedResult = await annotateLayout(layoutResult.data);
 
-    // For now, return Agent 1 output (RepoManifest)
+    // Return Agent 2 output (CodeStructure)
     return new Response(
-      JSON.stringify(ingesterResult.data),
+      JSON.stringify(parserResult.data),
       {
         status: 200,
         headers: CORS_HEADERS,
