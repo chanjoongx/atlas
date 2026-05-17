@@ -26,13 +26,22 @@ interface NodeWithDistrict extends LayoutNode {
 }
 
 /**
+ * Imperative handle returned by renderCityMap for external zoom control.
+ */
+export interface CityMapHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  reset: () => void;
+}
+
+/**
  * Render City Map visualization using D3.js
  */
 export function renderCityMap(
   svgElement: SVGSVGElement,
   layout: AnnotatedLayout,
   options?: Partial<RenderOptions>
-): void {
+): CityMapHandle {
   const svg = d3.select(svgElement);
   svg.selectAll('*').remove(); // Clear previous render
 
@@ -143,18 +152,44 @@ export function renderCityMap(
   const tx = (x: number) => (x - minX) * scale + offsetX;
   const ty = (y: number) => (y - minY) * scale + offsetY;
 
-  // Render districts as background regions
+  // Render districts as background regions + district labels
+  // (Compute bounds from actual node positions, not district.bounds —
+  //  backend sends pre-scale bounds while nodes have post-scale positions.)
+  const BOUNDS_PADDING_PX = 24;
   const districtGroup = g.append('g').attr('class', 'districts');
+  const districtLabelGroup = g.append('g').attr('class', 'district-labels');
+
   layout.districts.forEach((district) => {
     const color = districtColorMap.get(district.name) || '#888';
-    const bounds = district.bounds;
 
+    // Look up actual nodes in this district
+    const districtNodes = district.nodes
+      .map((id) => nodeMap.get(id))
+      .filter((n): n is NodeWithDistrict => n !== undefined);
+
+    if (districtNodes.length === 0) return; // skip empty districts
+
+    // Compute bounds from actual node positions (in layout coords)
+    const xs = districtNodes.flatMap((n) => [n.x - n.width / 2, n.x + n.width / 2]);
+    const ys = districtNodes.flatMap((n) => [n.y - n.height / 2, n.y + n.height / 2]);
+    const dMinX = Math.min(...xs);
+    const dMaxX = Math.max(...xs);
+    const dMinY = Math.min(...ys);
+    const dMaxY = Math.max(...ys);
+
+    // Convert to screen coords with padding
+    const screenMinX = tx(dMinX) - BOUNDS_PADDING_PX;
+    const screenMinY = ty(dMinY) - BOUNDS_PADDING_PX;
+    const screenMaxX = tx(dMaxX) + BOUNDS_PADDING_PX;
+    const screenMaxY = ty(dMaxY) + BOUNDS_PADDING_PX;
+
+    // Background rect
     districtGroup
       .append('rect')
-      .attr('x', tx(bounds.x))
-      .attr('y', ty(bounds.y))
-      .attr('width', bounds.width * scale)
-      .attr('height', bounds.height * scale)
+      .attr('x', screenMinX)
+      .attr('y', screenMinY)
+      .attr('width', screenMaxX - screenMinX)
+      .attr('height', screenMaxY - screenMinY)
       .attr('fill', color)
       .attr('opacity', DISTRICT_OPACITY)
       .attr('stroke', color)
@@ -162,20 +197,15 @@ export function renderCityMap(
       .attr('stroke-width', 1.5)
       .attr('stroke-dasharray', '4 4')
       .attr('rx', 12);
-  });
 
-  // Render district labels
-  const districtLabelGroup = g.append('g').attr('class', 'district-labels');
-  layout.districts.forEach((district) => {
-    const color = districtColorMap.get(district.name) || '#888';
-    const bounds = district.bounds;
-    const centerX = tx(bounds.x + bounds.width / 2);
-    const centerY = ty(bounds.y) - 8;
+    // District label (centered above the rect)
+    const labelCenterX = (screenMinX + screenMaxX) / 2;
+    const labelTopY = screenMinY - 8;
 
     districtLabelGroup
       .append('text')
-      .attr('x', centerX)
-      .attr('y', centerY)
+      .attr('x', labelCenterX)
+      .attr('y', labelTopY)
       .attr('text-anchor', 'middle')
       .attr('fill', color)
       .attr('font-size', '13px')
@@ -286,16 +316,32 @@ export function renderCityMap(
       });
   });
 
-  // Render labels (only for highlighted nodes, max 25)
-  const highlightedNodeIds = new Set(layout.highlights.map(h => h.nodeId));
+  // Render labels (only for highlighted nodes, max 25, with dedupe)
+  const highlightedNodeIds = new Set(layout.highlights.map((h) => h.nodeId));
   const filteredLabels = layout.labels
-    .filter(label => highlightedNodeIds.has(label.nodeId))
+    .filter((label) => highlightedNodeIds.has(label.nodeId))
     .slice(0, 25);
+
+  // Count duplicate label texts so we can disambiguate them
+  const labelTextCount = new Map<string, number>();
+  filteredLabels.forEach((l) => {
+    labelTextCount.set(l.text, (labelTextCount.get(l.text) || 0) + 1);
+  });
 
   const labelGroup = g.append('g').attr('class', 'labels');
   filteredLabels.forEach((label) => {
     const node = nodeMap.get(label.nodeId);
     if (!node) return;
+
+    // If this label text appears more than once, prefix with parent directory
+    let displayText = label.text;
+    if ((labelTextCount.get(label.text) || 0) > 1) {
+      const pathParts = node.metadata.path.split('/');
+      if (pathParts.length >= 2) {
+        const parent = pathParts[pathParts.length - 2];
+        displayText = `${parent}/${label.text}`;
+      }
+    }
 
     const labelX = tx(node.x);
     const labelY = ty(node.y);
@@ -312,24 +358,39 @@ export function renderCityMap(
       .attr('stroke', 'rgba(0,0,0,0.85)')
       .attr('stroke-width', '3px')
       .attr('stroke-linejoin', 'round')
-      .text(label.text);
+      .text(displayText);
   });
 
   // Setup zoom and pan
   const zoom = d3
     .zoom<SVGSVGElement, unknown>()
-    .scaleExtent([0.3, 5])
+    .scaleExtent([0.2, 8])
     .on('zoom', (event) => {
       g.attr('transform', event.transform);
     });
 
   svg.call(zoom as any);
-
-  // Initial transform: identity (tx/ty already centers content correctly)
-  svg.call(zoom.transform as any, d3.zoomIdentity);
-
-  // Disable double-click zoom (prevent accidental jumps during demo)
   svg.on('dblclick.zoom', null);
+
+  // Initial transform: zoom out to 0.9 for breathing room around content
+  const initialTransform = d3.zoomIdentity
+    .translate(width / 2, height / 2)
+    .scale(0.9)
+    .translate(-width / 2, -height / 2);
+  svg.call(zoom.transform as any, initialTransform);
+
+  // Return imperative handle for external zoom control
+  return {
+    zoomIn: () => {
+      svg.transition().duration(250).call(zoom.scaleBy as any, 1.4);
+    },
+    zoomOut: () => {
+      svg.transition().duration(250).call(zoom.scaleBy as any, 1 / 1.4);
+    },
+    reset: () => {
+      svg.transition().duration(400).call(zoom.transform as any, initialTransform);
+    },
+  };
 }
 
 // Tooltip management
