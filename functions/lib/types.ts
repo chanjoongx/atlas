@@ -14,7 +14,10 @@ import type {
   LayoutData,
   LayoutNode,
   LayoutEdge,
-  District
+  District,
+  AnnotatedLayout,
+  Highlight,
+  Label
 } from '../../src/types/index';
 
 // Re-export shared types for convenience
@@ -29,7 +32,10 @@ export type {
   LayoutData,
   LayoutNode,
   LayoutEdge,
-  District
+  District,
+  AnnotatedLayout,
+  Highlight,
+  Label
 };
 
 /**

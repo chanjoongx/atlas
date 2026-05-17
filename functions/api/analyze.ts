@@ -2,14 +2,18 @@
  * POST /api/analyze
  *
  * Main API endpoint for repository analysis.
- * Implements Agent 1 (Repo Ingester), Agent 2 (Structure Parser), and Agent 3 (Layout Engine).
- * Future phase will add Agent 4 (Annotator) to the pipeline.
+ * Implements the complete agent pipeline:
+ * - Agent 1: Repo Ingester
+ * - Agent 2: Structure Parser
+ * - Agent 3: Layout Engine
+ * - Agent 4: Annotator
  */
 
 import { createGitHubClientFromEnv, type Env } from '../lib/github-client';
 import { ingestRepo } from '../lib/agents/ingester';
 import { parseStructure, type ParserInput } from '../lib/agents/parser';
 import { generateLayout, type LayoutConfig } from '../lib/agents/layout';
+import { annotateLayout } from '../lib/agents/annotator';
 import type { IngesterInput } from '../lib/types';
 
 interface AnalyzeRequestBody {
@@ -127,12 +131,23 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       );
     }
 
-    // TODO: Agent 4 - Annotator (Phase 6)
-    // const annotatedResult = await annotateLayout(layoutResult.data);
+    // Agent 4: Annotator
+    const annotatedResult = await annotateLayout(layoutResult.data, parserResult.data);
 
-    // Return Agent 3 output (LayoutData)
+    if (!annotatedResult.success) {
+      const statusCode = getStatusCodeForError(annotatedResult.error.code);
+      return new Response(
+        JSON.stringify({ error: annotatedResult.error }),
+        {
+          status: statusCode,
+          headers: CORS_HEADERS,
+        }
+      );
+    }
+
+    // Return Agent 4 output (AnnotatedLayout) - complete pipeline
     return new Response(
-      JSON.stringify(layoutResult.data),
+      JSON.stringify(annotatedResult.data),
       {
         status: 200,
         headers: CORS_HEADERS,
