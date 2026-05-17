@@ -1,4 +1,4 @@
-import type { AnnotatedLayout } from '../../functions/lib/types';
+import type { AnnotatedLayout } from '../types';
 
 export interface AnalyzeRequest {
   owner: string;

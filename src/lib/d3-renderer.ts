@@ -1,5 +1,5 @@
 import * as d3 from 'd3';
-import type { AnnotatedLayout, LayoutNode, LayoutEdge, District, Highlight, Label } from '../../src/types';
+import type { AnnotatedLayout, LayoutNode, LayoutEdge } from '../types';
 
 const COLORS = d3.schemeTableau10;
 const BACKGROUND_COLOR = '#0a0e1a';
