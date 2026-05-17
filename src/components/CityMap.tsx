@@ -57,7 +57,7 @@ export function CityMap({ layout, onSvgReady }: CityMapProps) {
   return (
     <div
       ref={containerRef}
-      className="w-full min-h-[80vh] bg-slate-950 rounded-lg overflow-hidden border border-slate-800"
+      className="w-full flex-1 min-h-0 bg-slate-950 rounded-lg overflow-hidden border border-slate-800"
     >
       <svg
         ref={svgRef}

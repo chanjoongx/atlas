@@ -6,6 +6,8 @@ export interface AnalyzeRequest {
   branch?: string;
 }
 
+// Backend returns raw AnnotatedLayout, not wrapped
+// Keeping interface for reference but not using it
 export interface AnalyzeResponse {
   layout: AnnotatedLayout;
   cached: boolean;
@@ -67,9 +69,9 @@ export async function fetchAnnotatedLayout(
       );
     }
 
-    const data: AnalyzeResponse = await response.json();
+    const data = await response.json();
     console.log(`✓ Analyzed via API: ${owner}/${repo}`);
-    return data.layout;
+    return data as AnnotatedLayout;
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;

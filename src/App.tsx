@@ -35,10 +35,10 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-6">
+      <header className="flex-shrink-0 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">
+        <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
@@ -75,11 +75,11 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex flex-col gap-8">
+      <main className="flex-1 flex flex-col min-h-0 container mx-auto px-4 py-4">
+        <div className="flex flex-col gap-4">
           {/* Input Section */}
           {!layout && !loading && (
-            <div className="flex flex-col items-center gap-6 py-12">
+            <div className="flex-1 flex flex-col items-center justify-center gap-6">
               <div className="text-center max-w-2xl">
                 <h2 className="text-3xl font-bold mb-4">
                   Visualize Your Codebase
@@ -129,11 +129,15 @@ function App() {
           )}
 
           {/* Loading State */}
-          {loading && <LoadingState />}
+          {loading && (
+            <div className="flex-1 flex items-center justify-center">
+              <LoadingState />
+            </div>
+          )}
 
           {/* City Map */}
           {layout && !loading && (
-            <div className="flex flex-col gap-4">
+            <div className="flex-1 flex flex-col gap-2 min-h-0">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-semibold">{selectedRepo}</h2>
@@ -163,12 +167,12 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800 mt-16">
-        <div className="container mx-auto px-4 py-6">
+      <footer className="flex-shrink-0 border-t border-slate-800">
+        <div className="container mx-auto px-4 py-3">
           <div className="flex items-center justify-between text-sm text-slate-500">
             <p>Built with IBM Bob • May 2026</p>
             <a
-              href="https://github.com"
+              href="https://github.com/chanjoongx/atlas"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 hover:text-slate-400 transition-colors"
