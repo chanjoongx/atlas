@@ -1,179 +1,190 @@
-# Atlas - GitHub Repository Visualizer
+# Atlas
 
-Transform any GitHub repository into an interactive city map visualization using a "City Map" metaphor. Built for the IBM Bob Hackathon 2026.
+**One repo. One image. Grok any codebase in 30 seconds.**
 
-## 🌟 Features
+Atlas transforms any public GitHub repository into an interactive city map visualization. Districts are directories. Blocks are files. Hotspots are the code that actually matters.
 
-- **City Map Visualization**: Repositories rendered as interactive city maps using D3.js
-- **Pre-cached Demo Repos**: Instant loading for popular repositories (shadcn/ui, hono, drizzle-orm)
-- **Live Analysis**: Analyze any public GitHub repository on-demand
-- **PNG Export**: Client-side export of visualizations
-- **Serverless Architecture**: Powered by Cloudflare Pages + Functions
+🌐 **Live demo:** https://atlas-1q0.pages.dev
+🐙 **Source:** https://github.com/chanjoongx/atlas
 
-## 🛠️ Tech Stack
-
-- **Frontend**: React 18 + TypeScript + Vite
-- **Visualization**: D3.js v7 (force-directed layouts)
-- **Styling**: Tailwind CSS
-- **Backend**: Cloudflare Functions (serverless)
-- **GitHub API**: Octokit REST client
-- **Package Manager**: pnpm
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 18+ 
-- pnpm 9+
-- GitHub Personal Access Token (for caching repos)
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/chanjoongx/atlas.git
-cd atlas
-```
-
-2. Install dependencies:
-```bash
-pnpm install
-```
-
-3. Set up environment variables:
-```bash
-# Copy the example file
-cp .env.example .dev.vars
-
-# Edit .dev.vars and add your GitHub token
-# Get token from: https://github.com/settings/tokens
-# Required scope: public_repo
-```
-
-4. Cache demo repositories (optional but recommended):
-
-**Why cache?** Pre-caching demo repositories provides instant loading without API calls, perfect for demos and development.
-
-```bash
-# Start the dev server first (in one terminal)
-pnpm dev
-
-# Then in another terminal, run the cache script
-pnpm tsx scripts/cache-repos.ts
-```
-
-**What it does:**
-- Analyzes 3 demo repos (shadcn/ui, hono, drizzle-orm)
-- Saves AnnotatedLayout JSON to `public/cache/`
-- Frontend tries cache first, falls back to API if not found
-
-**Requirements:**
-- Dev server must be running (`pnpm dev`)
-- `GITHUB_TOKEN` set in `.dev.vars`
-- Takes ~2-3 minutes for all 3 repos
-
-**Output files:**
-- `public/cache/shadcn-ui-ui.json`
-- `public/cache/honojs-hono.json`
-- `public/cache/drizzle-team-drizzle-orm.json`
-
-These files are served as static assets and loaded instantly by the frontend.
-
-### Development
-
-Start the development server:
-```bash
-pnpm dev
-```
-
-The app will be available at `http://localhost:5173`
-
-### Build
-
-Build for production:
-```bash
-pnpm build
-```
-
-Preview production build:
-```bash
-pnpm preview
-```
-
-## 📦 Project Structure
-
-```
-atlas/
-├── src/                    # Frontend source code
-│   ├── components/         # React components
-│   ├── lib/               # Utility functions
-│   ├── types/             # TypeScript type definitions
-│   ├── App.tsx            # Main app component
-│   └── main.tsx           # Entry point
-├── functions/             # Cloudflare Functions (API)
-│   ├── api/              # API endpoints
-│   └── lib/              # Backend utilities & agents
-├── public/               # Static assets
-│   └── cache/           # Pre-cached repository data
-├── scripts/             # Build-time scripts
-└── bob_sessions/        # Bob AI session logs
-```
-
-## 🌐 Deployment
-
-### Cloudflare Pages
-
-1. Push your code to GitHub
-2. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → Pages
-3. Connect your GitHub repository
-4. Configure build settings:
-   - Build command: `pnpm build`
-   - Build output directory: `dist`
-   - Root directory: `/`
-5. Deploy!
-
-Your app will be available at `https://atlas.pages.dev`
-
-### Environment Variables
-
-For production deployment, add environment variables in Cloudflare Pages dashboard:
-- `GITHUB_TOKEN`: Your GitHub Personal Access Token (optional, for live analysis)
-
-## 🎯 Demo
-
-Live demo: [Coming Soon]
-
-Demo repositories:
-- shadcn/ui
-- honojs/hono
-- drizzle-team/drizzle-orm
-
-## 📝 Architecture
-
-Atlas uses a 4-agent pipeline to transform GitHub repositories into visualizations:
-
-1. **Repo Ingester**: Fetches repository data from GitHub API
-2. **Structure Parser**: Extracts code structure, dependencies, and metrics
-3. **Layout Engine**: Positions nodes using D3.js force-directed layout
-4. **Annotator**: Highlights important nodes and adds labels
-
-See `bob_sessions/01-plan/architecture.md` for detailed architecture documentation.
-
-## 🤝 Contributing
-
-This project was built for the IBM Bob Hackathon 2026. Contributions are welcome!
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
-## 🙏 Acknowledgments
-
-- IBM Bob AI for development assistance
-- Cloudflare for hosting infrastructure
-- D3.js community for visualization tools
-- GitHub for API access
+Built end-to-end with [IBM Bob](https://www.ibm.com/) during the [lablab.ai](https://lablab.ai) IBM Bob Hackathon — May 2026.
 
 ---
 
-Built with ❤️ using IBM Bob AI
+## ✨ Features
+
+- **City Map Visualization** — Force-directed D3.js layout with color-coded districts
+- **Pre-cached demo repos** — shadcn/ui, Hono, Drizzle ORM load instantly (zero API calls)
+- **Live custom analysis** — Paste any public GitHub repo for on-demand visualization
+- **Interactive** — Pan, zoom (in/out/reset controls), hover for file details
+- **PNG export** — One-click high-resolution image, full visualization regardless of zoom state
+- **Serverless** — Built on Cloudflare Pages + Functions
+
+---
+
+## 🚀 Try It
+
+1. Visit **[atlas-1q0.pages.dev](https://atlas-1q0.pages.dev)**
+2. Pick a demo repo, or paste any public GitHub repo as `owner/repo`
+3. Click **Generate City Map** — visualization in seconds
+
+Demo repos load instantly from pre-cached JSON. Custom repos run the live analysis pipeline.
+
+---
+
+## 🏗️ How It Works
+
+Atlas runs a 4-agent pipeline on Cloudflare Functions:
+
+```
+GitHub repo → [Ingester] → [Parser] → [Layout] → [Annotator] → City Map
+               file tree   structure   D3 force    centrality
+               metadata    + deps      layout      + labels
+```
+
+1. **Ingester** fetches repo metadata and file tree via GitHub API
+2. **Parser** analyzes structure, classifies files (source / test / config / docs), extracts import dependencies
+3. **Layout Engine** positions every node using D3 force-directed simulation with district clustering
+4. **Annotator** computes centrality metrics, picks highlights (entry points / core / hotspots), generates labels
+
+See [`bob_sessions/01-plan/architecture.md`](./bob_sessions/01-plan/architecture.md) for the full design doc.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Tools |
+|---|---|
+| Frontend | React 18 · TypeScript · Vite · Tailwind CSS |
+| Visualization | D3.js v7 (`d3-force`, `d3-scale`, `d3-scale-chromatic`) |
+| Backend | Cloudflare Pages Functions · Octokit REST |
+| Package manager | pnpm |
+
+---
+
+## 💻 Local Development
+
+### Prerequisites
+
+- Node.js 20+
+- pnpm 9+
+- GitHub PAT with `public_repo` scope (only needed for live custom-repo analysis)
+
+### Setup
+
+```bash
+git clone https://github.com/chanjoongx/atlas.git
+cd atlas
+pnpm install
+
+# (Optional) Add token for live custom-repo analysis during dev
+cp .env.example .dev.vars
+# Edit .dev.vars: GITHUB_TOKEN=ghp_yourtoken
+```
+
+The 3 pre-cached demo repos work **without** a token. The token is only needed if you want to analyze custom repos locally.
+
+### Run
+
+```bash
+pnpm dev          # http://localhost:5173
+pnpm build        # production build
+pnpm test         # vitest suite (78 tests)
+```
+
+### Cache additional repos (optional)
+
+The 3 demo repos are already cached in [`public/cache/`](./public/cache/). To cache more:
+
+```bash
+pnpm dev                              # terminal 1
+pnpm tsx scripts/cache-repos.ts       # terminal 2
+```
+
+Cached JSON is served as a static asset at `/cache/{owner}-{repo}.json`.
+
+---
+
+## 🌐 Deployment (Cloudflare Pages)
+
+Atlas auto-deploys on every push to `main`.
+
+### Deploy your own fork
+
+1. **Connect repo to Cloudflare Pages**
+   - Cloudflare dashboard → Workers & Pages → Create application → Pages → Connect to Git
+   - Select your fork, branch: `main`
+   - Framework preset: **Vite** (auto-detected)
+   - Build command: `pnpm build`
+   - Build output directory: `dist`
+
+2. **Add environment variables** (Settings → Environment variables → Production *and* Preview)
+   - Name: `GITHUB_TOKEN`
+   - Value: your PAT (scope: `public_repo`)
+   - **⚠️ Mark as Encrypted (Secret)** — required for security; visible as `••••••` after save
+   - Without this, demo repos still work via cache, but custom repo analysis returns 500
+
+3. **Add Functions compatibility flag** (Settings → Functions → Compatibility flags)
+   - Add `nodejs_compat` to both Production and Preview
+   - Required for `@octokit/rest` to bundle correctly
+
+4. **Trigger deployment**
+   - Push any commit (auto-deploys), or click "Retry deployment" in the dashboard
+   - **Note:** Environment variable changes only apply to *new* deployments
+
+---
+
+## 🤖 Built with IBM Bob
+
+Atlas was built end-to-end during the IBM Bob Hackathon (May 16–17, 2026) with [IBM Bob](https://www.ibm.com/) as the AI development partner.
+
+| Stat | Count |
+|---|---|
+| Bob sessions | 11 (planning → 4 agents → frontend → fixes → polish) |
+| Tests passing | 78 / 78 |
+| Pipeline agents | Ingester · Parser · Layout · Annotator |
+| Commits | 18 across 11 sessions |
+
+Each session is exported to [`bob_sessions/`](./bob_sessions/) — fully traceable: what was prompted, what Bob produced, what was committed. The highlight was Bob holding full repo context across every session. Iterating on the layout algorithm in one session and having the annotator in the next session immediately understand the data shape — with zero re-explaining — was the real productivity unlock.
+
+---
+
+## 📁 Project Structure
+
+```
+atlas/
+├── src/                          Frontend (React + Vite)
+│   ├── components/               UI: CityMap, RepoInput, ExportButton, LoadingState
+│   ├── lib/                      d3-renderer, api-client, png-export
+│   ├── types/                    Shared TypeScript types
+│   └── App.tsx                   Root component
+├── functions/                    Cloudflare Functions (serverless backend)
+│   ├── api/analyze.ts            POST /api/analyze endpoint
+│   └── lib/agents/               4-agent pipeline + tests (78/78 passing)
+├── public/
+│   ├── cache/                    Pre-cached demo visualizations (JSON)
+│   └── _routes.json              Cloudflare Pages routing config
+├── scripts/cache-repos.ts        Cache generation script
+└── bob_sessions/                 Bob AI session logs (per phase)
+```
+
+---
+
+## 📜 License
+
+MIT — see [LICENSE](./LICENSE).
+
+---
+
+## 🙏 Acknowledgments
+
+- **[IBM Bob](https://www.ibm.com/)** — the AI dev partner that made this weekend possible
+- **[lablab.ai](https://lablab.ai)** — for hosting the hackathon
+- **[Cloudflare Pages](https://pages.cloudflare.com/)** — serverless hosting
+- **[D3.js](https://d3js.org/)** — force-directed graph layout
+- **[Octokit](https://github.com/octokit/octokit.js)** — GitHub API client
+- **[shadcn/ui](https://github.com/shadcn-ui/ui), [Hono](https://github.com/honojs/hono), [Drizzle ORM](https://github.com/drizzle-team/drizzle-orm)** — the open-source projects featured as demo subjects
+
+---
+
+<p align="center">Built with IBM Bob • Chanjoong Kim • May 2026</p>
