@@ -116,15 +116,29 @@ function securityHeaders(): Plugin {
         );
       }
 
+      /*
+       * Cloudflare Web Analytics.
+       *
+       * Pages injects `beacon.min.js` from static.cloudflareinsights.com into
+       * every response, after our build has run, so it is not something the
+       * hash list above can ever cover. Without these two entries the browser
+       * refuses the script and the beacon never fires: analytics was enabled,
+       * reporting nothing, and saying so only in a console error nobody was
+       * reading. Both hosts are Cloudflare's own, first party to the
+       * deployment, and neither can execute anything else.
+       */
+      const analytics = 'https://static.cloudflareinsights.com';
+      const analyticsBeacon = 'https://cloudflareinsights.com';
+
       const csp = [
         "default-src 'self'",
-        `script-src 'self' ${hashes.join(' ')}`.trim(),
+        `script-src 'self' ${analytics} ${hashes.join(' ')}`.trim(),
         "style-src 'self' 'unsafe-inline'",
         // blob: is the PNG exporter, which rasterises a serialised SVG through
         // an <img>. data: covers the base64 font embedded in that SVG.
         "img-src 'self' data: blob:",
         "font-src 'self' data:",
-        "connect-src 'self'",
+        `connect-src 'self' ${analyticsBeacon}`,
         "manifest-src 'self'",
         "base-uri 'none'",
         "form-action 'none'",
