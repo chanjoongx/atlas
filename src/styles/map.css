@@ -57,11 +57,14 @@
 }
 
 .atlas-edges.has-focus .atlas-edge {
-  stroke-opacity: 0.05;
+  stroke-opacity: 0.04;
 }
 
+/* The one state where arcs are meant to shout. Everything else recedes so a
+   single file's dependencies are readable through a dense district. */
 .atlas-edges.has-focus .atlas-edge.is-focus {
-  stroke-opacity: 0.95;
+  stroke: var(--accent);
+  stroke-opacity: 1;
   stroke-width: 1.8;
 }
 

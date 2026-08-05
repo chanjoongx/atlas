@@ -60,6 +60,10 @@ const SHADOW_SPREAD = 1.14;
 /** Light column above an entry point, in world units. */
 const BEACON_HEIGHT = 34;
 
+/** How high a dependency arc bows above the roofs it connects. */
+const ARC_MIN_LIFT = 26;
+const ARC_MAX_LIFT = 150;
+
 /** Most labels a map may carry before it stops being a map. */
 const MAX_LABELS = 18;
 /**
@@ -157,9 +161,16 @@ export function drawScene(options: DrawOptions): DrawResult {
 
   if (options.showGrid) parts.push(grid(scene, azimuth, tokens));
   parts.push(plates(districts, theme));
-  parts.push(plateNames.markup);
-  if (options.showEdges && scene.edges.length > 0) parts.push(edges(scene, azimuth, theme));
   parts.push(city(nodes, theme, tokens));
+
+  // Arcs and text go over the skyline, not under it. Drawn beneath the city
+  // they were completely hidden: a dense district is a solid wall from this
+  // camera, so five hundred dependency arcs rendered as nothing at all, and a
+  // district's own name was covered by whichever district stood in front of
+  // it. Arcs rise clear of the roofs and stay faint, so they read as a network
+  // laid over the city rather than as clutter in it.
+  if (options.showEdges && scene.edges.length > 0) parts.push(edges(scene, azimuth, theme));
+  parts.push(plateNames.markup);
   if (options.showLabels) {
     parts.push(labels(nodes, tokens, fit.scale, density, plateNames.boxes));
   }
@@ -383,29 +394,44 @@ function districtLabels(
   return { markup: parts.join(''), boxes: placed };
 }
 
+/**
+ * Dependency arcs.
+ *
+ * Colouring these by the source district was the obvious choice and the wrong
+ * one: most imports stay inside their own district, so every arc was drawn in
+ * the exact colour of the buildings underneath it and disappeared. A neutral
+ * tone reads against any district. They stay quiet at rest, because five
+ * hundred visible arcs is a hairball rather than a graph, and the real payoff
+ * is the focus state, where one file's dependencies light up and the rest fall
+ * away.
+ */
 function edges(scene: Scene, azimuth: Azimuth, theme: ThemeName): string {
-  const parts: string[] = ['<g class="atlas-edges" pointer-events="none" fill="none">'];
+  const parts: string[] = [
+    `<g class="atlas-edges" pointer-events="none" fill="none" stroke="${
+      theme === 'carbon' ? '#cfe0ff' : '#2a3550'
+    }">`,
+  ];
 
   for (const edge of scene.edges) {
     const from = scene.nodeById.get(edge.source);
     const to = scene.nodeById.get(edge.target);
     if (!from || !to) continue;
 
-    const a = groundPoint(from, azimuth);
-    const b = groundPoint(to, azimuth);
-    const lift = Math.min(70, Math.hypot(b.x - a.x, b.y - a.y) * 0.18);
+    // Anchored at the roof, not the ground, so an arc leaves the building it
+    // belongs to rather than emerging from somewhere inside the block.
+    const a = roofAnchor(from, azimuth);
+    const b = roofAnchor(to, azimuth);
+    const span = Math.hypot(b.x - a.x, b.y - a.y);
+    const lift = Math.min(ARC_MAX_LIFT, ARC_MIN_LIFT + span * 0.26);
     const cx = (a.x + b.x) / 2;
     const cy = (a.y + b.y) / 2 - lift;
-    const mat = material(edge.districtIndex, theme);
 
     parts.push(
       `<path class="atlas-edge" data-from="${escapeAttr(edge.source)}" data-to="${escapeAttr(
         edge.target,
-      )}" d="M${r(a.x)} ${r(a.y)}Q${r(cx)} ${r(cy)} ${r(b.x)} ${r(b.y)}" stroke="${
-        mat.base
-      }" stroke-width="${edge.strength >= 1 ? 1.1 : 0.8}" stroke-opacity="${
-        theme === 'carbon' ? 0.22 : 0.24
-      }" stroke-linecap="round"/>`,
+      )}" d="M${r(a.x)} ${r(a.y)}Q${r(cx)} ${r(cy)} ${r(b.x)} ${r(b.y)}" stroke-width="${
+        edge.strength >= 1 ? 0.9 : 0.65
+      }" stroke-opacity="${theme === 'carbon' ? 0.16 : 0.2}" stroke-linecap="round"/>`,
     );
   }
 
@@ -565,9 +591,9 @@ function labels(
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function groundPoint(node: SceneNode, azimuth: Azimuth): Point {
+function roofAnchor(node: SceneNode, azimuth: Azimuth): Point {
   const centre = rotate(node.wx, node.wy, azimuth);
-  return project(centre.x, centre.y, EDGE_ELEVATION);
+  return project(centre.x, centre.y, node.height + EDGE_ELEVATION);
 }
 
 /**

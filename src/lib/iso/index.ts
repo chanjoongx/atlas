@@ -191,8 +191,12 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
 
   function onClick(event: MouseEvent): void {
     const id = nodeIdFromEvent(event);
-    setSelection(id === selectedId ? null : id);
-    options.onSelect?.(id && id !== selectedId ? scene.nodeById.get(id) ?? null : null);
+    // Decide before mutating. setSelection writes selectedId, so comparing
+    // against it afterwards always said "same node" and the host was handed a
+    // null selection on every click, which is why the inspector never opened.
+    const next = id === selectedId ? null : id;
+    setSelection(next);
+    options.onSelect?.(next ? (scene.nodeById.get(next) ?? null) : null);
   }
 
   svgElement.addEventListener('pointermove', onPointerMove);
