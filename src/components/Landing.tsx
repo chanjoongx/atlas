@@ -11,11 +11,14 @@ interface LandingProps {
   onAnalyze: (ref: RepoRef) => void;
 }
 
+/** The tag that holds the state the hackathon judges actually saw. */
+const HACKATHON_TAG = 'https://github.com/chanjoongx/atlas/releases/tag/v1.0-hackathon';
+
 const PIPELINE = [
   {
     icon: GitBranch,
     name: 'Ingester',
-    detail: 'Pulls the file tree and repository metadata from the GitHub API.',
+    detail: 'Streams the repository as one archive, with no credentials at all.',
   },
   {
     icon: ScanSearch,
@@ -57,6 +60,27 @@ export function Landing({ theme, loading, onAnalyze }: LandingProps) {
               Atlas turns a public GitHub repository into an isometric map. Directories become
               districts, files become buildings as tall as the code inside them, and the handful of
               files that actually matter stand out as landmarks.
+            </p>
+
+            {/*
+              Immediately under the award, because that is where the wrong
+              belief forms. The badge sits beside a screenshot of a renderer
+              the judges never saw, so anyone reading the two together
+              concludes this is what won. It is not, and saying so here costs
+              one line and is the difference between a claim that survives
+              scrutiny and one that does not.
+            */}
+            <p className="text-tertiary mt-3 max-w-xl text-xs leading-relaxed">
+              That was a 48 hour build, tagged{' '}
+              <a
+                href={HACKATHON_TAG}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-secondary underline underline-offset-2 transition-colors"
+              >
+                v1.0-hackathon
+              </a>
+              . What you are looking at has been rebuilt since, on the same four agent pipeline.
             </p>
 
             <div className="mt-7">

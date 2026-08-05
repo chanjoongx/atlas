@@ -391,7 +391,8 @@ function SiteFooter() {
     <footer className="border-line pad-safe-x border-t py-7 [--pad-x:1.5rem]">
       <div className="text-tertiary mx-auto flex max-w-5xl flex-col gap-3 text-2xs sm:flex-row sm:items-center sm:justify-between">
         <p>
-          Built with IBM Bob in 48 hours, May 2026. Open source under the MIT licence.
+          Built with IBM Bob in 48 hours, May 2026, and rebuilt since. Open source under the MIT
+          licence.
         </p>
         <nav className="flex items-center gap-4">
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="hover:text-secondary transition-colors">

@@ -9,27 +9,34 @@ export interface DemoRepo extends RepoRef {
   takeaway: string;
 }
 
+/*
+ * Each card says what its city looks like, so these have to be re-read whenever
+ * the maps change. They were written against an older pipeline and had all
+ * three drifted: shadcn is two districts rather than one, hono's source is by
+ * far its largest rather than a small core, and drizzle divides by package
+ * rather than by SQL dialect.
+ */
 export const DEMO_REPOS: DemoRepo[] = [
   {
     owner: 'shadcn-ui',
     repo: 'ui',
     name: 'shadcn/ui',
     blurb: 'Component library',
-    takeaway: 'One flat district of near identical blocks. That is a component library.',
+    takeaway: 'Two districts hold almost all of it, and the even rows are the registry.',
   },
   {
     owner: 'honojs',
     repo: 'hono',
     name: 'Hono',
     blurb: 'Edge web framework',
-    takeaway: 'A small core beside a wide runtime test belt. That is a portability story.',
+    takeaway: 'Benchmarks and runtime tests get ground of their own. That is portability.',
   },
   {
     owner: 'drizzle-team',
     repo: 'drizzle-orm',
     name: 'Drizzle ORM',
     blurb: 'TypeScript ORM',
-    takeaway: 'Repeating districts per dialect. That is where the real surface area lives.',
+    takeaway: 'Twelve districts, one per package. The surface area is visible at a glance.',
   },
 ];
 

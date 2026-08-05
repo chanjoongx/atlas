@@ -21,6 +21,12 @@ Atlas turns a public GitHub repository into an interactive isometric map. Direct
 
 <sub>Drizzle ORM. Twelve districts, one per package, and the surface area of the project is visible in about a second.</sub>
 
+<br><br>
+
+<sub><b>These screenshots are Atlas as it is now, which is not what the hackathon judges saw.</b><br>
+The 48 hour build that placed 2nd is tagged <a href="https://github.com/chanjoongx/atlas/releases/tag/v1.0-hackathon"><code>v1.0-hackathon</code></a>.
+What belongs to which is set out under <a href="#provenance">Provenance</a>.</sub>
+
 </div>
 
 ---
@@ -96,7 +102,11 @@ Rendering is a hand written isometric projection over SVG: 2:1 tiles, three shad
 
 ## Provenance
 
-The state submitted to the hackathon is permanently tagged **[`v1.0-hackathon`](https://github.com/chanjoongx/atlas/releases/tag/v1.0-hackathon)** (commit `ce239e8`, 2026-05-17 20:54 KST). Judging closed long ago; `main` has moved on since, and the tag is there so the submitted version stays unambiguous.
+**Everything above shows Atlas as it is today. That is not the version that was judged.**
+
+Atlas was built solo in 48 hours for the IBM Bob Hackathon, 2026-05-16 to 05-17, and placed 2nd of 503 submissions. That state is permanently tagged **[`v1.0-hackathon`](https://github.com/chanjoongx/atlas/releases/tag/v1.0-hackathon)** (commit `ce239e8`, 2026-05-17 20:54 KST) so the submitted version stays unambiguous. Judging closed long ago and `main` has moved on.
+
+The prize belongs to the 48 hour build. The site at atlascity.dev is a continuation of it, and the two are worth keeping apart: the judged version drew flat 2D maps, had one theme, and resolved no dependency arcs at all.
 
 `bob_sessions/` is the exported IBM Bob transcript for every session that built the original submission. It is frozen and will not be edited.
 

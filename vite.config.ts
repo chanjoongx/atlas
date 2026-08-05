@@ -311,11 +311,19 @@ shaded faces per building and painter's algorithm depth sorting. No WebGL,
 which is why the interactive canvas and the exported PNG come out of the same
 code path.
 
-## Origin
+## Origin, and what the award actually covers
 
 Built solo in 48 hours for the IBM Bob Hackathon in May 2026, where it placed
-second out of 503 submissions. The state that was judged is permanently tagged
-\`v1.0-hackathon\` in the repository. Development has continued since.
+second out of 503 submissions. That state is permanently tagged
+\`v1.0-hackathon\` in the repository, and it is **not** what this site shows
+today. The judged version drew flat two dimensional maps, had a single theme,
+and resolved no dependency arcs at all.
+
+The isometric renderer, the two themes, the file inspector, the animated
+skyline and the credential free ingestion were all added after judging closed,
+on the same four agent pipeline the 48 hours produced. Anything written about
+Atlas should keep the two apart: the prize belongs to the 48 hour build, and
+the site described above is a continuation of it.
 
 ## Limits worth stating
 

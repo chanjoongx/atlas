@@ -40,6 +40,11 @@ export const FAQ: FaqEntry[] = [
       'No. The pipeline is four deterministic stages: read the repository, classify files and resolve imports, settle a force directed layout, then score centrality and pick landmarks. The same repository always produces the same city, which is what makes two maps worth comparing.',
   },
   {
+    question: 'Is this the version that won the hackathon?',
+    answer:
+      'No. Atlas was built solo in 48 hours for the IBM Bob Hackathon in May 2026 and placed second out of 503 submissions, and that state is permanently tagged v1.0-hackathon in the repository. The judged version drew flat two dimensional maps, had a single theme, and resolved no dependency arcs at all. The isometric renderer, both themes, the file inspector and the credential free ingestion were added after judging closed, on the same four agent pipeline the 48 hours produced.',
+  },
+  {
     question: 'Can I use a map in an article, a talk or a README?',
     answer:
       'Yes. Atlas is MIT licensed and every map exports to PNG at up to three times scale with a caption band naming the repository. Attribution is appreciated but not required.',
