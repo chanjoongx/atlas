@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { parseStructure, LANGUAGE_MAP, ENTRY_POINT_PATTERNS } from '../parser';
+import {
+  parseStructure,
+  collectPackageRoots,
+  decodeBase64Content,
+  isEntryPoint,
+  normalizePath,
+  resolveImportPath,
+  selectEntryPoints,
+  LANGUAGE_MAP,
+  ENTRY_POINT_PATTERNS,
+  MAX_ENTRY_POINTS,
+} from '../parser';
 import type { ParserInput } from '../parser';
 import type { FileNode } from '../../types';
 import type { Octokit } from '@octokit/rest';
@@ -16,6 +27,21 @@ const createMockOctokit = () => {
     _mockGetBlob: mockGetBlob,
   } as unknown as Octokit & { _mockGetBlob: ReturnType<typeof vi.fn> };
 };
+
+/**
+ * Serve blob content per file sha, so only the intended files carry imports
+ */
+function mockBlobContent(
+  octokit: Octokit & { _mockGetBlob: ReturnType<typeof vi.fn> },
+  contentBySha: Record<string, string>
+): void {
+  octokit._mockGetBlob.mockImplementation(async ({ file_sha }: { file_sha: string }) => ({
+    data: {
+      content: Buffer.from(contentBySha[file_sha] ?? '').toString('base64'),
+      encoding: 'base64',
+    },
+  }));
+}
 
 describe('Agent 2: Structure Parser', () => {
   let mockOctokit: Octokit & { _mockGetBlob: ReturnType<typeof vi.fn> };
@@ -335,9 +361,13 @@ describe('Agent 2: Structure Parser', () => {
 
   describe('Import Extraction', () => {
     it('should extract ES6 imports', async () => {
+      // Import targets must exist in the tree: resolution is evidence based
       const input: ParserInput = {
         tree: [
           { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
+          { path: 'src/helpers.ts', type: 'file', size: 500, sha: 'a3' },
+          { path: 'components/Button.tsx', type: 'file', size: 500, sha: 'a4' },
         ],
         owner: 'test',
         repo: 'test-repo',
@@ -350,9 +380,7 @@ import baz from '../components/Button';
 import React from 'react';
 `;
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from(content).toString('base64') },
-      });
+      mockBlobContent(mockOctokit, { a1: content });
 
       const result = await parseStructure(input, mockOctokit);
       expect(result.success).toBe(true);
@@ -370,6 +398,8 @@ import React from 'react';
       const input: ParserInput = {
         tree: [
           { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/dynamic.ts', type: 'file', size: 500, sha: 'a2' },
+          { path: 'src/lazy.ts', type: 'file', size: 500, sha: 'a3' },
         ],
         owner: 'test',
         repo: 'test-repo',
@@ -380,9 +410,7 @@ const module = await import('./dynamic');
 import('./lazy').then(m => m.default);
 `;
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from(content).toString('base64') },
-      });
+      mockBlobContent(mockOctokit, { a1: content });
 
       const result = await parseStructure(input, mockOctokit);
       expect(result.success).toBe(true);
@@ -396,6 +424,8 @@ import('./lazy').then(m => m.default);
       const input: ParserInput = {
         tree: [
           { path: 'src/index.js', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/utils.js', type: 'file', size: 500, sha: 'a2' },
+          { path: 'helpers/helper.js', type: 'file', size: 500, sha: 'a3' },
         ],
         owner: 'test',
         repo: 'test-repo',
@@ -406,9 +436,7 @@ const utils = require('./utils');
 const helper = require('../helpers/helper');
 `;
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from(content).toString('base64') },
-      });
+      mockBlobContent(mockOctokit, { a1: content });
 
       const result = await parseStructure(input, mockOctokit);
       expect(result.success).toBe(true);
@@ -452,6 +480,9 @@ import './local';
       const input: ParserInput = {
         tree: [
           { path: 'src/index.tsx', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/utils/helper.ts', type: 'file', size: 500, sha: 'a2' },
+          { path: 'src/components/Icon.tsx', type: 'file', size: 500, sha: 'a3' },
+          { path: 'config.ts', type: 'file', size: 500, sha: 'a4' },
         ],
         owner: 'test',
         repo: 'test-repo',
@@ -463,9 +494,7 @@ import { Icon } from './components/Icon';
 import { config } from '../config';
 `;
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from(content).toString('base64') },
-      });
+      mockBlobContent(mockOctokit, { a1: content });
 
       const result = await parseStructure(input, mockOctokit);
       expect(result.success).toBe(true);
@@ -476,6 +505,150 @@ import { config } from '../config';
           expect(dep.to).not.toContain('..');
           expect(dep.from).toBe('src/index.tsx');
         });
+      }
+    });
+
+    it('should build edges across a multi file tree', async () => {
+      const input: ParserInput = {
+        tree: [
+          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a2' },
+          { path: 'src/lib/util.ts', type: 'file', size: 1000, sha: 'a3' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, {
+        a1: "import { App } from './app';\nimport { util } from './lib/util';\n",
+        a2: "import { util } from './lib/util';\n",
+        a3: 'export const util = 1;\n',
+      });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const edges = result.data.dependencies.map(dep => `${dep.from} -> ${dep.to}`).sort();
+        expect(edges).toEqual([
+          'src/app.ts -> src/lib/util.ts',
+          'src/index.ts -> src/app.ts',
+          'src/index.ts -> src/lib/util.ts',
+        ]);
+      }
+    });
+
+    it('should record resolved imports on the parsed file', async () => {
+      const input: ParserInput = {
+        tree: [
+          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a2' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, {
+        a1: "import { App } from './app';\nimport { App as Again } from './app';\n",
+      });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const index = result.data.files.find(file => file.path === 'src/index.ts');
+        // Duplicate imports of the same target collapse into one edge
+        expect(index?.imports).toEqual(['src/app.ts']);
+      }
+    });
+
+    it('should resolve tsconfig path aliases', async () => {
+      const input: ParserInput = {
+        tree: [
+          { path: 'tsconfig.json', type: 'file', size: 200, sha: 'tc' },
+          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/lib/format.ts', type: 'file', size: 500, sha: 'a2' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, {
+        // Comments and a trailing comma, as real tsconfig files have
+        tc: `{
+  // path aliases
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+    },
+  },
+}`,
+        a1: "import { format } from '@/lib/format';\nimport React from 'react';\n",
+      });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.dependencies).toContainEqual({
+          from: 'src/app.ts',
+          to: 'src/lib/format.ts',
+          type: 'import',
+        });
+        // The npm package must not resolve to anything
+        expect(result.data.dependencies).toHaveLength(1);
+      }
+    });
+
+    it('should scope path aliases to the package that declares them', async () => {
+      const input: ParserInput = {
+        tree: [
+          { path: 'package.json', type: 'file', size: 100, sha: 'root' },
+          { path: 'apps/www/package.json', type: 'file', size: 100, sha: 'wm' },
+          { path: 'apps/www/tsconfig.json', type: 'file', size: 200, sha: 'wt' },
+          { path: 'apps/www/app/page.tsx', type: 'file', size: 1000, sha: 'wp' },
+          { path: 'apps/www/lib/utils.ts', type: 'file', size: 500, sha: 'wu' },
+          { path: 'packages/cli/src/index.ts', type: 'file', size: 500, sha: 'ci' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, {
+        wt: '{ "compilerOptions": { "paths": { "@/*": ["./*"] } } }',
+        wp: "import { cn } from '@/lib/utils';\n",
+        // Outside apps/www the same specifier must not resolve
+        ci: "import { cn } from '@/lib/utils';\n",
+      });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.dependencies).toEqual([
+          { from: 'apps/www/app/page.tsx', to: 'apps/www/lib/utils.ts', type: 'import' },
+        ]);
+      }
+    });
+
+    it('should extract Python relative imports', async () => {
+      const input: ParserInput = {
+        tree: [
+          { path: 'pkg/main.py', type: 'file', size: 1000, sha: 'p1' },
+          { path: 'pkg/helpers.py', type: 'file', size: 500, sha: 'p2' },
+          { path: 'pkg/sub/__init__.py', type: 'file', size: 100, sha: 'p3' },
+          { path: 'shared/util.py', type: 'file', size: 500, sha: 'p4' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, {
+        p1: 'from .helpers import x\nfrom .sub import y\nfrom ..shared.util import z\nimport os\n',
+      });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const targets = result.data.dependencies.map(dep => dep.to).sort();
+        expect(targets).toEqual(['pkg/helpers.py', 'pkg/sub/__init__.py', 'shared/util.py']);
       }
     });
   });
@@ -655,6 +828,145 @@ import { config } from '../config';
         expect(result.data.files.length).toBe(2);
       }
     });
+  });
+});
+
+describe('Blob Content Decoding', () => {
+  it('should decode ASCII content', () => {
+    expect(decodeBase64Content(Buffer.from('const a = 1;').toString('base64'))).toBe('const a = 1;');
+  });
+
+  it('should decode multi-byte UTF-8 content', () => {
+    const source = '// 도시 지도 렌더러 ✨\nconst café = "naïve";\n';
+    const encoded = Buffer.from(source, 'utf-8').toString('base64');
+    expect(decodeBase64Content(encoded)).toBe(source);
+  });
+
+  it('should ignore the line breaks GitHub embeds in blob content', () => {
+    const source = 'import { a } from "./a";\nimport { b } from "./b";\n';
+    const encoded = Buffer.from(source, 'utf-8').toString('base64');
+    // GitHub wraps blob payloads at 60 characters
+    const wrapped = (encoded.match(/.{1,60}/g) ?? []).join('\n') + '\n';
+    expect(decodeBase64Content(wrapped)).toBe(source);
+  });
+
+  it('should return an empty string for empty payloads', () => {
+    expect(decodeBase64Content('')).toBe('');
+    expect(decodeBase64Content('\n')).toBe('');
+  });
+});
+
+describe('Import Path Resolution', () => {
+  const fileTree = new Set([
+    'src/index.ts',
+    'src/app.tsx',
+    'src/lib/index.ts',
+    'src/lib/util.ts',
+    'src/lib/nested/index.ts',
+    'src/styles.css',
+    'src/types.d.ts',
+    'config.ts',
+    'scripts/build.mjs',
+  ]);
+
+  it('should resolve an exact path', () => {
+    expect(resolveImportPath('src/index.ts', './styles.css', fileTree)).toBe('src/styles.css');
+  });
+
+  it('should resolve an extensionless relative import', () => {
+    expect(resolveImportPath('src/index.ts', './lib/util', fileTree)).toBe('src/lib/util.ts');
+    expect(resolveImportPath('src/index.ts', './app', fileTree)).toBe('src/app.tsx');
+  });
+
+  it('should resolve a parent directory import', () => {
+    expect(resolveImportPath('src/lib/util.ts', '../app', fileTree)).toBe('src/app.tsx');
+    expect(resolveImportPath('src/lib/util.ts', '../../config', fileTree)).toBe('config.ts');
+  });
+
+  it('should resolve a directory import to its index file', () => {
+    expect(resolveImportPath('src/index.ts', './lib/nested', fileTree)).toBe('src/lib/nested/index.ts');
+    // A bare '.' means the directory the importing file lives in
+    expect(resolveImportPath('src/lib/util.ts', '.', fileTree)).toBe('src/lib/index.ts');
+    expect(resolveImportPath('src/lib/nested/index.ts', '..', fileTree)).toBe('src/lib/index.ts');
+  });
+
+  it('should resolve a declaration file when nothing else matches', () => {
+    expect(resolveImportPath('src/index.ts', './types', fileTree)).toBe('src/types.d.ts');
+  });
+
+  it('should resolve a repo root absolute import', () => {
+    expect(resolveImportPath('src/index.ts', '/scripts/build.mjs', fileTree)).toBe('scripts/build.mjs');
+  });
+
+  it('should reject bare specifiers', () => {
+    expect(resolveImportPath('src/index.ts', 'react', fileTree)).toBeNull();
+    expect(resolveImportPath('src/index.ts', '@radix-ui/react-slot', fileTree)).toBeNull();
+    expect(resolveImportPath('src/index.ts', 'node:fs', fileTree)).toBeNull();
+  });
+
+  it('should reject targets that are not in the tree', () => {
+    expect(resolveImportPath('src/index.ts', './missing', fileTree)).toBeNull();
+    expect(resolveImportPath('src/index.ts', './lib/missing/deep', fileTree)).toBeNull();
+  });
+
+  it('should reject paths that escape the repo root', () => {
+    expect(resolveImportPath('src/index.ts', '../../../etc/passwd', fileTree)).toBeNull();
+    expect(normalizePath('../outside')).toBeNull();
+    expect(normalizePath('src/./lib/../lib/util.ts')).toBe('src/lib/util.ts');
+  });
+
+  it('should reject self imports', () => {
+    expect(resolveImportPath('src/lib/nested/index.ts', '.', fileTree)).toBeNull();
+    expect(resolveImportPath('src/index.ts', './index.ts', fileTree)).toBeNull();
+  });
+});
+
+describe('Entry Point Selection', () => {
+  it('should not treat nested index files as entry points', () => {
+    const paths = new Set([
+      'package.json',
+      'src/index.ts',
+      'src/middleware/basic-auth/index.ts',
+      'src/helper/cookie/index.ts',
+    ]);
+    const roots = collectPackageRoots(paths);
+
+    expect(isEntryPoint('src/index.ts', roots)).toBe(true);
+    expect(isEntryPoint('src/middleware/basic-auth/index.ts', roots)).toBe(false);
+    expect(isEntryPoint('src/helper/cookie/index.ts', roots)).toBe(false);
+  });
+
+  it('should treat package roots as entry point owners', () => {
+    const paths = new Set([
+      'package.json',
+      'packages/core/package.json',
+      'packages/core/src/index.ts',
+      'packages/ui/src/index.ts',
+    ]);
+    const roots = collectPackageRoots(paths);
+
+    expect(roots.has('')).toBe(true);
+    expect(roots.has('packages/core')).toBe(true);
+    expect(isEntryPoint('packages/core/src/index.ts', roots)).toBe(true);
+    // No package.json in packages/ui, so its index is just another module
+    expect(isEntryPoint('packages/ui/src/index.ts', roots)).toBe(false);
+  });
+
+  it('should cap the number of entry points a repo can claim', () => {
+    const files: FileNode[] = [];
+    for (let i = 0; i < MAX_ENTRY_POINTS + 15; i += 1) {
+      files.push({ path: `packages/pkg${i}/package.json`, type: 'file', size: 100, sha: `m${i}` });
+      files.push({ path: `packages/pkg${i}/src/index.ts`, type: 'file', size: 100, sha: `s${i}` });
+    }
+    files.push({ path: 'package.json', type: 'file', size: 100, sha: 'root-manifest' });
+    files.push({ path: 'src/index.ts', type: 'file', size: 100, sha: 'root-index' });
+
+    const roots = collectPackageRoots(new Set(files.map(file => file.path)));
+    const entryPoints = selectEntryPoints(files, roots);
+
+    expect(entryPoints.size).toBe(MAX_ENTRY_POINTS);
+    // Shallowest paths win, so the repo root entry always survives the cap
+    expect(entryPoints.has('src/index.ts')).toBe(true);
   });
 });
 

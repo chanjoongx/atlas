@@ -18,6 +18,8 @@ export const LANGUAGE_MAP: Record<string, string> = {
   '.tsx': 'typescript',
   '.js': 'javascript',
   '.jsx': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
   '.py': 'python',
   '.rs': 'rust',
   '.go': 'go',
@@ -50,7 +52,7 @@ export const LANGUAGE_MAP: Record<string, string> = {
 };
 
 /**
- * Entry point file patterns
+ * Entry point file patterns, relative to a package root
  */
 export const ENTRY_POINT_PATTERNS = [
   'src/index.ts',
@@ -139,11 +141,85 @@ export const ASSET_PATTERNS = [
 ];
 
 /**
+ * Extensions worth downloading. These either yield import edges or, at minimum,
+ * an exact line count instead of a size based estimate.
+ */
+export const FETCHABLE_EXTENSIONS = [
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+  '.py', '.go', '.rs', '.java', '.rb', '.php',
+];
+
+/**
+ * Extensions probed, in order, when an import specifier omits its extension.
+ */
+export const RESOLUTION_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.d.ts'];
+
+/**
+ * Hard ceiling on blob downloads per analysis.
+ *
+ * Every download is one Cloudflare subrequest (1000 per request on Workers Paid,
+ * 50 on the free plan), so this number is the single lever for request cost.
+ * The layout renders at most 500 nodes, and content for the highest value half
+ * of those is enough to draw a representative dependency graph.
+ */
+export const MAX_CONTENT_FETCHES = 240;
+
+/**
+ * Blob requests kept in flight at once. Bounded so a large repo cannot open
+ * hundreds of sockets at the same time.
+ */
+export const FETCH_CONCURRENCY = 14;
+
+/**
+ * Files larger than this (bytes) are never downloaded. Generated bundles and
+ * lock style files cost time and add almost no dependency signal.
+ */
+export const MAX_FETCH_FILE_SIZE = 400 * 1024;
+
+/**
+ * Consecutive blob failures that end the download pass.
+ *
+ * One failure is a bad blob. A run of them means the runtime is rejecting
+ * every further call, which is what hitting the subrequest budget looks like
+ * from inside the request.
+ */
+export const CONSECUTIVE_FAILURE_LIMIT = 8;
+
+/**
+ * Most entry points a single repository may claim. Without a cap a monorepo
+ * turns every package index into a landmark and drowns out everything else.
+ */
+export const MAX_ENTRY_POINTS = 20;
+
+/**
+ * Most tsconfig files read for path aliases, and how deep they may live.
+ */
+const MAX_TSCONFIG_FETCHES = 8;
+const MAX_TSCONFIG_DEPTH = 3;
+const MAX_TSCONFIG_SIZE = 64 * 1024;
+
+/**
+ * Path alias rule derived from a tsconfig `compilerOptions.paths` entry.
+ */
+interface AliasRule {
+  /** Directory the tsconfig governs. Empty string means the repo root. */
+  scope: string;
+  /** Specifier text before the wildcard, for example `@/`. */
+  prefix: string;
+  /** True when the pattern contained a `*` wildcard. */
+  wildcard: boolean;
+  /** Repo relative directory prefixes the alias maps to. */
+  targets: string[];
+}
+
+/**
  * Agent 2: Structure Parser
- * 
- * Extracts code structure, dependencies, and metrics from file tree.
- * Fetches content only for entry points and top-level source files.
- * 
+ *
+ * Extracts code structure, dependencies, and metrics from a file tree.
+ * Downloads content for the highest value source files (bounded by
+ * MAX_CONTENT_FETCHES) and resolves every import against the real file tree,
+ * so an edge is only emitted when its target actually exists in the repo.
+ *
  * @param input Parser input with file tree and repo coordinates
  * @param octokit Authenticated Octokit client
  * @returns CodeStructure with parsed files, dependencies, and metrics
@@ -166,15 +242,14 @@ export async function parseStructure(
 
     // Filter out directories, only process files
     const files = input.tree.filter(node => node.type === 'file');
+    const filePaths = new Set(files.map(file => file.path));
 
-    // Classify and parse files
-    const parsedFiles: ParsedFile[] = [];
-    const dependencies: Dependency[] = [];
+    // Entry points are resolved against real package roots, then capped
+    const packageRoots = collectPackageRoots(filePaths);
+    const entryPoints = selectEntryPoints(files, packageRoots);
 
-    // Identify files to fetch content for
-    const filesToFetch = identifyFilesToFetch(files);
-
-    // Fetch content for selected files
+    // Identify files to fetch content for, then fetch them with bounded concurrency
+    const filesToFetch = identifyFilesToFetch(files, entryPoints, packageRoots);
     const fileContents = await fetchFileContents(
       filesToFetch,
       input.owner,
@@ -182,17 +257,41 @@ export async function parseStructure(
       octokit
     );
 
+    // Path aliases (optional signal, silently skipped when tsconfig is unreadable)
+    const aliasRules = buildAliasRules(fileContents);
+
     // Process each file
+    const parsedFiles: ParsedFile[] = [];
+    const dependencies: Dependency[] = [];
+    const seenDependencies = new Set<string>();
+
     for (const file of files) {
-      const parsedFile = await parseFile(file, fileContents.get(file.path));
-      parsedFiles.push(parsedFile);
+      const content = fileContents.get(file.path);
+      const parsedFile = parseFile(file, entryPoints.has(file.path), content);
 
       // Extract dependencies if content is available
-      if (fileContents.has(file.path)) {
-        const content = fileContents.get(file.path)!;
-        const fileDeps = extractDependencies(file.path, content, parsedFile.language);
-        dependencies.push(...fileDeps);
+      if (content !== undefined) {
+        const fileDeps = extractDependencies(
+          file.path,
+          content,
+          parsedFile.language,
+          filePaths,
+          aliasRules
+        );
+
+        for (const dependency of fileDeps) {
+          // A newline cannot appear in a git path, so it is a safe separator
+          const key = `${dependency.from}\n${dependency.to}`;
+          if (seenDependencies.has(key)) {
+            continue;
+          }
+          seenDependencies.add(key);
+          dependencies.push(dependency);
+          parsedFile.imports.push(dependency.to);
+        }
       }
+
+      parsedFiles.push(parsedFile);
     }
 
     // Calculate metrics
@@ -220,39 +319,204 @@ export async function parseStructure(
 }
 
 /**
- * Identify which files to fetch content for (entry points + top-level source files)
+ * Collect the directories that own an entry point: the repo root plus every
+ * directory that has its own package.json (the package roots of a monorepo).
+ *
+ * @param filePaths Every file path in the repository
+ * @returns Set of repo relative directories, with the empty string for the root
  */
-function identifyFilesToFetch(files: FileNode[]): FileNode[] {
-  const toFetch: FileNode[] = [];
+export function collectPackageRoots(filePaths: ReadonlySet<string>): Set<string> {
+  const roots = new Set<string>(['']);
+  const suffix = '/package.json';
 
-  for (const file of files) {
-    // Always fetch package.json
-    if (file.path === 'package.json') {
-      toFetch.push(file);
-      continue;
-    }
-
-    // Check if it's an entry point
-    if (isEntryPoint(file.path)) {
-      toFetch.push(file);
-      continue;
-    }
-
-    // Fetch top-level source files (src/*.{ts,tsx,js,jsx}, max depth 2)
-    const pathParts = file.path.split('/');
-    if (pathParts.length <= 2 && pathParts[0] === 'src') {
-      const ext = getFileExtension(file.path);
-      if (ext && ['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
-        toFetch.push(file);
-      }
+  for (const path of Array.from(filePaths)) {
+    if (path.endsWith(suffix)) {
+      roots.add(path.slice(0, path.length - suffix.length));
     }
   }
 
-  return toFetch;
+  return roots;
 }
 
 /**
- * Fetch file contents from GitHub blob API
+ * Check whether a path is `<package root>/<entry point pattern>`.
+ *
+ * The previous implementation matched any path ending in an entry pattern, so
+ * every `src/middleware/foo/index.ts` in a large repo counted as an entry point.
+ *
+ * @param path Repo relative file path
+ * @param packageRoots Directories that may own an entry point
+ * @returns True when the file is a genuine entry point
+ */
+export function isEntryPoint(path: string, packageRoots: ReadonlySet<string>): boolean {
+  for (const pattern of ENTRY_POINT_PATTERNS) {
+    if (path === pattern) {
+      return packageRoots.has('');
+    }
+
+    if (!path.endsWith(`/${pattern}`)) {
+      continue;
+    }
+
+    const root = path.slice(0, path.length - pattern.length - 1);
+    if (packageRoots.has(root)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Select the entry points of a repository, shallowest first, capped at
+ * MAX_ENTRY_POINTS so one repo cannot claim every landmark.
+ *
+ * @param files Files in the repository
+ * @param packageRoots Directories that may own an entry point
+ * @returns Set of entry point paths
+ */
+export function selectEntryPoints(
+  files: FileNode[],
+  packageRoots: ReadonlySet<string>
+): Set<string> {
+  const candidates = files
+    .filter(file => isEntryPoint(file.path, packageRoots))
+    .map(file => file.path)
+    .sort((a, b) => {
+      const depthDiff = a.split('/').length - b.split('/').length;
+      if (depthDiff !== 0) {
+        return depthDiff;
+      }
+      return a.localeCompare(b);
+    });
+
+  return new Set(candidates.slice(0, MAX_ENTRY_POINTS));
+}
+
+/**
+ * Identify which files to download content for.
+ *
+ * Ranking mirrors prioritizeFiles() in layout.ts so the downloaded files
+ * overlap the nodes that actually get rendered. Without that overlap an edge
+ * is discarded because one of its endpoints was never selected as a node.
+ */
+function identifyFilesToFetch(
+  files: FileNode[],
+  entryPoints: ReadonlySet<string>,
+  packageRoots: ReadonlySet<string>
+): FileNode[] {
+  const selected: FileNode[] = [];
+  const selectedPaths = new Set<string>();
+
+  function take(file: FileNode): void {
+    if (selectedPaths.has(file.path) || selected.length >= MAX_CONTENT_FETCHES) {
+      return;
+    }
+    selectedPaths.add(file.path);
+    selected.push(file);
+  }
+
+  // 1. Root manifest: cheap, and callers expect it to be present
+  const rootManifest = files.find(file => file.path === 'package.json');
+  if (rootManifest) {
+    take(rootManifest);
+  }
+
+  // 2. tsconfig files carry the path aliases used to resolve non relative imports
+  const tsconfigs = files
+    .filter(file => isAliasConfigCandidate(file, packageRoots))
+    .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path))
+    .slice(0, MAX_TSCONFIG_FETCHES);
+
+  for (const tsconfig of tsconfigs) {
+    take(tsconfig);
+  }
+
+  // 3. Source files, highest value first
+  const candidates = files
+    .filter(file => isFetchableSource(file, entryPoints))
+    .map(file => ({ file, score: scoreFetchCandidate(file, entryPoints.has(file.path)) }))
+    .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
+
+  for (const candidate of candidates) {
+    if (selected.length >= MAX_CONTENT_FETCHES) {
+      break;
+    }
+    take(candidate.file);
+  }
+
+  return selected;
+}
+
+/**
+ * Check whether a file is a source file worth downloading
+ */
+function isFetchableSource(file: FileNode, entryPoints: ReadonlySet<string>): boolean {
+  if (file.size > MAX_FETCH_FILE_SIZE) {
+    return false;
+  }
+
+  const ext = getFileExtension(file.path);
+  if (!ext || !FETCHABLE_EXTENSIONS.includes(ext)) {
+    return false;
+  }
+
+  if (entryPoints.has(file.path)) {
+    return true;
+  }
+
+  return classifyFileType(file.path) === 'source';
+}
+
+/**
+ * Check whether a file is a tsconfig worth reading for path aliases
+ */
+function isAliasConfigCandidate(file: FileNode, packageRoots: ReadonlySet<string>): boolean {
+  if (getBaseName(file.path) !== 'tsconfig.json' || file.size > MAX_TSCONFIG_SIZE) {
+    return false;
+  }
+
+  const dir = dirName(file.path);
+  if (dir === '') {
+    return true;
+  }
+
+  return packageRoots.has(dir) && dir.split('/').length <= MAX_TSCONFIG_DEPTH;
+}
+
+/**
+ * Score a file for download priority.
+ *
+ * Mirrors the scoring in prioritizeFiles() (layout.ts): entry points first,
+ * then large-but-shallow source files, with examples, fixtures, and legacy code
+ * pushed to the back.
+ */
+function scoreFetchCandidate(file: FileNode, isEntry: boolean): number {
+  const estimatedLoc = Math.max(Math.floor(file.size / 35), 1);
+  let score = Math.sqrt(estimatedLoc);
+
+  if (isEntry) {
+    score += 1000;
+  }
+
+  const path = file.path.toLowerCase();
+  if (path.includes('example')) score -= 50;
+  if (path.includes('test') || path.includes('spec')) score -= 30;
+  if (path.includes('fixture') || path.includes('mock')) score -= 30;
+  if (path.includes('__')) score -= 20;
+  if (path.includes('legacy') || path.includes('deprecated')) score -= 40;
+
+  const fileName = path.split('/').pop() || '';
+  if (fileName.length < 15) score += 10;
+
+  if (file.path.split('/').length <= 3) score += 15;
+
+  return score;
+}
+
+/**
+ * Fetch file contents from the GitHub blob API with bounded concurrency.
+ * Failures are logged and skipped: partial results beat a failed analysis.
  */
 async function fetchFileContents(
   files: FileNode[],
@@ -261,10 +525,15 @@ async function fetchFileContents(
   octokit: Octokit
 ): Promise<Map<string, string>> {
   const contents = new Map<string, string>();
+  let cursor = 0;
+  let consecutiveFailures = 0;
+  let exhausted = false;
 
-  // Fetch in parallel with error handling per file
-  await Promise.all(
-    files.map(async (file) => {
+  async function worker(): Promise<void> {
+    while (cursor < files.length && !exhausted) {
+      const file = files[cursor];
+      cursor += 1;
+
       try {
         const response = await octokit.rest.git.getBlob({
           owner,
@@ -272,32 +541,88 @@ async function fetchFileContents(
           file_sha: file.sha,
         });
 
-        // Decode base64 content
-        const content = Buffer.from(response.data.content, 'base64').toString('utf-8');
-        contents.set(file.path, content);
+        // GitHub reports encoding 'none' for blobs it refuses to inline
+        const encoding = (response.data as { encoding?: string }).encoding;
+        if (encoding !== undefined && encoding !== 'base64') {
+          continue;
+        }
+
+        contents.set(file.path, decodeBase64Content(response.data.content));
+        consecutiveFailures = 0;
       } catch (error) {
-        // Log error but continue (partial results better than failure)
+        // Partial results beat no results, so one bad blob never stops the run.
+        // A run of failures is different: it means the runtime is refusing
+        // every further call, which on Cloudflare is the per-request subrequest
+        // budget (50 on the free plan, 1000 on paid). Once that happens the
+        // remaining hundreds of attempts can only add latency and log noise, so
+        // the pool stops and the analysis continues with whatever it has.
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
+          exhausted = true;
+          console.warn(
+            `Stopping blob downloads after ${consecutiveFailures} consecutive failures; ` +
+              `${contents.size} of ${files.length} files were retrieved.`
+          );
+          return;
+        }
         console.warn(`Failed to fetch content for ${file.path}:`, error);
       }
-    })
-  );
+    }
+  }
+
+  const workerCount = Math.min(FETCH_CONCURRENCY, files.length);
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < workerCount; i += 1) {
+    workers.push(worker());
+  }
+
+  await Promise.all(workers);
 
   return contents;
 }
 
 /**
+ * Decode a GitHub blob payload into a UTF-8 string.
+ *
+ * Runtime agnostic: Cloudflare Workers have no Buffer, so this uses atob plus
+ * TextDecoder. GitHub wraps blob content at 60 characters, so whitespace is
+ * stripped before decoding, and multi-byte UTF-8 survives because the decoding
+ * happens over raw bytes rather than per character.
+ *
+ * @param encoded Base64 payload, possibly containing newlines
+ * @returns Decoded UTF-8 text, or an empty string when the payload is empty
+ */
+export function decodeBase64Content(encoded: string): string {
+  if (!encoded) {
+    return '';
+  }
+
+  const normalized = encoded.replace(/\s+/g, '');
+  if (normalized.length === 0) {
+    return '';
+  }
+
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+/**
  * Parse a single file into ParsedFile structure
  */
-async function parseFile(file: FileNode, content?: string): Promise<ParsedFile> {
+function parseFile(file: FileNode, isEntry: boolean, content?: string): ParsedFile {
   const language = detectLanguage(file.path);
   const type = classifyFileType(file.path);
-  const isEntry = isEntryPoint(file.path);
 
   // Calculate LOC
   let loc: number;
-  if (content) {
+  if (content !== undefined) {
     // Actual line count from content
-    loc = content.split('\n').length;
+    loc = Math.max(content.split('\n').length, 1);
   } else {
     // Estimate from file size (35 bytes per line average)
     loc = Math.max(Math.floor(file.size / 35), 1);
@@ -308,7 +633,7 @@ async function parseFile(file: FileNode, content?: string): Promise<ParsedFile> 
     type,
     language,
     loc,
-    imports: [], // Will be populated by extractDependencies
+    imports: [], // Populated from resolved dependencies
     exports: [], // Out of MVP scope
     isEntryPoint: isEntry,
   };
@@ -359,72 +684,162 @@ function classifyFileType(path: string): FileType {
 }
 
 /**
- * Check if file is an entry point
- */
-function isEntryPoint(path: string): boolean {
-  return ENTRY_POINT_PATTERNS.some(pattern => path === pattern || path.endsWith(`/${pattern}`));
-}
-
-/**
  * Extract file extension from path
  */
 function getFileExtension(path: string): string | null {
-  const match = path.match(/\.([^.]+)$/);
+  const match = path.match(/\.([^./]+)$/);
   return match ? `.${match[1].toLowerCase()}` : null;
 }
 
 /**
- * Extract dependencies (imports) from file content
+ * Extract the last path segment
+ */
+function getBaseName(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index === -1 ? path : path.slice(index + 1);
+}
+
+/**
+ * Extract the directory of a path. Returns an empty string for root level files.
+ */
+function dirName(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index === -1 ? '' : path.slice(0, index);
+}
+
+/**
+ * Join two path fragments without introducing a leading slash
+ */
+function joinPath(base: string, relative: string): string {
+  if (base === '') {
+    return relative;
+  }
+  if (relative === '') {
+    return base;
+  }
+  return `${base}/${relative}`;
+}
+
+/**
+ * Normalize a repo relative path, resolving `.` and `..` segments.
+ *
+ * @returns Normalized path, or null when the path is empty or escapes the repo root
+ */
+export function normalizePath(path: string): string | null {
+  const segments: string[] = [];
+
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      if (segments.length === 0) {
+        return null;
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+
+  return segments.length > 0 ? segments.join('/') : null;
+}
+
+/**
+ * Extract dependencies (imports) from file content.
+ *
+ * JavaScript and TypeScript cover ES imports, dynamic imports, re-exports, and
+ * CommonJS requires. Python covers relative imports. Other languages contribute
+ * an exact line count but no edges.
  */
 function extractDependencies(
   filePath: string,
   content: string,
-  language: string
+  language: string,
+  filePaths: ReadonlySet<string>,
+  aliases: readonly AliasRule[]
+): Dependency[] {
+  if (language === 'typescript' || language === 'javascript') {
+    return extractScriptDependencies(filePath, content, filePaths, aliases);
+  }
+
+  if (language === 'python') {
+    return extractPythonDependencies(filePath, content, filePaths);
+  }
+
+  return [];
+}
+
+/**
+ * Extract JavaScript and TypeScript dependencies
+ */
+function extractScriptDependencies(
+  filePath: string,
+  content: string,
+  filePaths: ReadonlySet<string>,
+  aliases: readonly AliasRule[]
 ): Dependency[] {
   const dependencies: Dependency[] = [];
 
-  if (language === 'typescript' || language === 'javascript') {
-    // ES6 import statements: import ... from '...'
-    const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
-    let match;
-    while ((match = importRegex.exec(content)) !== null) {
-      const importPath = match[1];
-      const resolvedPath = resolveImportPath(filePath, importPath);
-      if (resolvedPath) {
-        dependencies.push({
-          from: filePath,
-          to: resolvedPath,
-          type: 'import',
-        });
-      }
+  function add(specifier: string, type: 'import' | 'dynamic'): void {
+    const resolved = resolveImportPath(filePath, specifier, filePaths, aliases);
+    if (resolved !== null) {
+      dependencies.push({ from: filePath, to: resolved, type });
+    }
+  }
+
+  // ES imports and re-exports: import ... from '...', export ... from '...', import '...'
+  const importRegex = /(?:^|[\s;}])(?:import|export)\s+(?:[\w*${}\s,]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+  let match: RegExpExecArray | null;
+  while ((match = importRegex.exec(content)) !== null) {
+    add(match[1], 'import');
+  }
+
+  // Dynamic imports: import('...')
+  const dynamicImportRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((match = dynamicImportRegex.exec(content)) !== null) {
+    add(match[1], 'dynamic');
+  }
+
+  // CommonJS require: require('...')
+  const requireRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((match = requireRegex.exec(content)) !== null) {
+    add(match[1], 'import');
+  }
+
+  return dependencies;
+}
+
+/**
+ * Extract Python relative imports (`from .module import name`)
+ */
+function extractPythonDependencies(
+  filePath: string,
+  content: string,
+  filePaths: ReadonlySet<string>
+): Dependency[] {
+  const dependencies: Dependency[] = [];
+  const relativeImportRegex = /^[ \t]*from\s+(\.+)([A-Za-z_][\w.]*)?\s+import\s+/gm;
+
+  let match: RegExpExecArray | null;
+  while ((match = relativeImportRegex.exec(content)) !== null) {
+    const dots = match[1];
+    const moduleName = match[2] ?? '';
+
+    // One dot is the current package, each extra dot walks one level up
+    const upward = '../'.repeat(dots.length - 1);
+    const modulePath = moduleName.replace(/\./g, '/');
+    const base = normalizePath(joinPath(dirName(filePath), `${upward}${modulePath}`));
+    if (base === null) {
+      continue;
     }
 
-    // Dynamic imports: import('...')
-    const dynamicImportRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((match = dynamicImportRegex.exec(content)) !== null) {
-      const importPath = match[1];
-      const resolvedPath = resolveImportPath(filePath, importPath);
-      if (resolvedPath) {
-        dependencies.push({
-          from: filePath,
-          to: resolvedPath,
-          type: 'dynamic',
-        });
-      }
-    }
+    const target = [`${base}.py`, `${base}/__init__.py`].find(
+      candidate => filePaths.has(candidate) && candidate !== filePath
+    );
 
-    // CommonJS require: require('...')
-    const requireRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((match = requireRegex.exec(content)) !== null) {
-      const importPath = match[1];
-      const resolvedPath = resolveImportPath(filePath, importPath);
-      if (resolvedPath) {
-        dependencies.push({
-          from: filePath,
-          to: resolvedPath,
-          type: 'import',
-        });
-      }
+    if (target !== undefined) {
+      dependencies.push({ from: filePath, to: target, type: 'import' });
     }
   }
 
@@ -432,54 +847,273 @@ function extractDependencies(
 }
 
 /**
- * Resolve relative import paths to absolute paths within repo
- * Returns null for external packages (bare specifiers)
+ * Resolve an import specifier to a real file in the repository.
+ *
+ * Resolution is evidence based: the candidate path is probed against the set of
+ * paths that actually exist in the tree, trying the exact path, then each known
+ * extension, then `<path>/index.<ext>`. Bare specifiers (npm packages) resolve
+ * only through a tsconfig path alias, and unresolvable specifiers return null so
+ * no phantom edge is emitted.
+ *
+ * @param fromPath Path of the importing file
+ * @param importPath Raw specifier as written in the source
+ * @param filePaths Every file path in the repository
+ * @param aliases Path alias rules from tsconfig files
+ * @returns Repo relative path of the imported file, or null
  */
-function resolveImportPath(fromPath: string, importPath: string): string | null {
-  // Filter out external packages (bare specifiers like 'react', 'lodash')
-  if (!importPath.startsWith('.') && !importPath.startsWith('/')) {
+export function resolveImportPath(
+  fromPath: string,
+  importPath: string,
+  filePaths: ReadonlySet<string>,
+  aliases: readonly AliasRule[] = []
+): string | null {
+  const specifier = importPath.trim();
+  if (specifier === '') {
     return null;
   }
 
-  // Get directory of the importing file
-  const fromDir = fromPath.split('/').slice(0, -1).join('/');
+  const candidates: string[] = [];
 
-  // Resolve relative path
-  let resolvedPath: string;
-  if (importPath.startsWith('./') || importPath.startsWith('../')) {
-    // Relative import
-    const parts = fromDir.split('/');
-    const importParts = importPath.split('/');
+  if (specifier === '.' || specifier === '..' || specifier.startsWith('./') || specifier.startsWith('../')) {
+    // Relative import, resolved against the importing file's directory
+    const base = normalizePath(joinPath(dirName(fromPath), specifier));
+    if (base === null) {
+      return null;
+    }
+    candidates.push(base);
+  } else if (specifier.startsWith('/')) {
+    // Absolute import, resolved from the repo root
+    const base = normalizePath(specifier);
+    if (base === null) {
+      return null;
+    }
+    candidates.push(base);
+  } else {
+    // Bare specifier: only a tsconfig alias can point it back into the repo
+    candidates.push(...resolveAliasCandidates(fromPath, specifier, aliases));
+  }
 
-    for (const part of importParts) {
-      if (part === '..') {
-        parts.pop();
-      } else if (part !== '.') {
-        parts.push(part);
+  for (const candidate of candidates) {
+    const resolved = probeFilePath(candidate, filePaths);
+    if (resolved !== null && resolved !== fromPath) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Probe a candidate path against the real file tree
+ */
+function probeFilePath(base: string, filePaths: ReadonlySet<string>): string | null {
+  if (base === '') {
+    return null;
+  }
+
+  if (filePaths.has(base)) {
+    return base;
+  }
+
+  for (const ext of RESOLUTION_EXTENSIONS) {
+    const withExtension = `${base}${ext}`;
+    if (filePaths.has(withExtension)) {
+      return withExtension;
+    }
+  }
+
+  for (const ext of RESOLUTION_EXTENSIONS) {
+    const indexFile = `${base}/index${ext}`;
+    if (filePaths.has(indexFile)) {
+      return indexFile;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Expand a bare specifier into candidate paths using tsconfig path aliases
+ */
+function resolveAliasCandidates(
+  fromPath: string,
+  specifier: string,
+  aliases: readonly AliasRule[]
+): string[] {
+  const candidates: string[] = [];
+
+  for (const rule of aliases) {
+    // A package level tsconfig only governs files inside its own directory
+    if (rule.scope !== '' && !fromPath.startsWith(`${rule.scope}/`)) {
+      continue;
+    }
+
+    if (rule.wildcard) {
+      if (!specifier.startsWith(rule.prefix)) {
+        continue;
+      }
+      const rest = specifier.slice(rule.prefix.length);
+      for (const target of rule.targets) {
+        const joined = normalizePath(joinPath(target, rest));
+        if (joined !== null) {
+          candidates.push(joined);
+        }
+      }
+      continue;
+    }
+
+    if (specifier !== rule.prefix) {
+      continue;
+    }
+    for (const target of rule.targets) {
+      const joined = normalizePath(target);
+      if (joined !== null) {
+        candidates.push(joined);
       }
     }
-
-    resolvedPath = parts.join('/');
-  } else if (importPath.startsWith('/')) {
-    // Absolute import (from repo root)
-    resolvedPath = importPath.slice(1);
-  } else {
-    // Shouldn't happen, but handle gracefully
-    return null;
   }
 
-  // Add common extensions if missing
-  if (!getFileExtension(resolvedPath)) {
-    // Try common extensions
-    const extensions = ['.ts', '.tsx', '.js', '.jsx', '.json'];
-    for (const ext of extensions) {
-      // For now, just append .ts as default (we don't have file system access to check)
-      resolvedPath += '.ts';
-      break;
+  return candidates;
+}
+
+/**
+ * Build path alias rules from the tsconfig files that were downloaded.
+ * Any tsconfig that fails to parse is skipped: aliases are a bonus signal, and
+ * relative import resolution does not depend on them.
+ */
+function buildAliasRules(contents: ReadonlyMap<string, string>): AliasRule[] {
+  const rules: AliasRule[] = [];
+
+  for (const [path, text] of Array.from(contents.entries())) {
+    if (getBaseName(path) !== 'tsconfig.json') {
+      continue;
+    }
+
+    const config = parseJsonc(text) as {
+      compilerOptions?: { baseUrl?: unknown; paths?: unknown };
+    } | null;
+
+    const compilerOptions = config?.compilerOptions;
+    if (!compilerOptions || typeof compilerOptions !== 'object') {
+      continue;
+    }
+
+    const paths = compilerOptions.paths;
+    if (!paths || typeof paths !== 'object') {
+      continue;
+    }
+
+    const scope = dirName(path);
+    const baseUrl = typeof compilerOptions.baseUrl === 'string' ? compilerOptions.baseUrl : '.';
+    const base = normalizePath(joinPath(scope, baseUrl)) ?? '';
+
+    for (const [pattern, rawTargets] of Object.entries(paths as Record<string, unknown>)) {
+      if (!Array.isArray(rawTargets)) {
+        continue;
+      }
+
+      const wildcardIndex = pattern.indexOf('*');
+      const prefix = wildcardIndex >= 0 ? pattern.slice(0, wildcardIndex) : pattern;
+      const targets: string[] = [];
+
+      for (const rawTarget of rawTargets) {
+        if (typeof rawTarget !== 'string') {
+          continue;
+        }
+        const targetWildcard = rawTarget.indexOf('*');
+        const targetPrefix = targetWildcard >= 0 ? rawTarget.slice(0, targetWildcard) : rawTarget;
+        targets.push(normalizePath(joinPath(base, targetPrefix)) ?? '');
+      }
+
+      if (targets.length > 0) {
+        rules.push({ scope, prefix, wildcard: wildcardIndex >= 0, targets });
+      }
     }
   }
 
-  return resolvedPath;
+  // Most specific scope first, so a package tsconfig wins over the repo root one
+  rules.sort((a, b) => b.scope.length - a.scope.length);
+
+  return rules;
+}
+
+/**
+ * Parse JSON that may contain comments and trailing commas (tsconfig style)
+ *
+ * @returns Parsed value, or null when the text is not valid JSON
+ */
+function parseJsonc(text: string): unknown {
+  try {
+    return JSON.parse(stripJsonComments(text).replace(/,(\s*[}\]])/g, '$1'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove line and block comments from JSON text, leaving string literals intact
+ */
+function stripJsonComments(text: string): string {
+  let result = '';
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = i + 1 < text.length ? text[i + 1] : '';
+
+    if (inLineComment) {
+      if (char === '\n') {
+        inLineComment = false;
+        result += char;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === '*' && next === '/') {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += char;
+      if (char === '\\') {
+        result += next;
+        i += 1;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      result += char;
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
 }
 
 /**

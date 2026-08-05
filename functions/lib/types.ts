@@ -16,6 +16,7 @@ import type {
   LayoutEdge,
   District,
   AnnotatedLayout,
+  LayoutMeta,
   Highlight,
   Label
 } from '../../src/types/index';
@@ -34,6 +35,7 @@ export type {
   LayoutEdge,
   District,
   AnnotatedLayout,
+  LayoutMeta,
   Highlight,
   Label
 };

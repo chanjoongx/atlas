@@ -21,12 +21,24 @@ import type {
 /**
  * Configuration constants for annotation
  */
-const TOP_CORE_PERCENT = 0.1;        // Top 10% by inDegree
-const TOP_HOTSPOT_PERCENT = 0.05;    // Top 5% by LOC
+const TOP_CORE_PERCENT = 0.1;        // Core candidates: top 10% by inDegree
+const TOP_HOTSPOT_PERCENT = 0.05;    // Hotspot candidates: top 5% by LOC
 const MAX_HIGHLIGHTS = 50;           // Cap total highlights
 const MAX_LABEL_LENGTH = 15;         // District label max length
 const MAX_NODE_LABEL_LENGTH = 12;    // Node label max length
 const TOP_SIZE_PERCENT = 0.1;        // Top 10% by visual size for node labels
+
+/**
+ * Per kind highlight quotas.
+ *
+ * A single shared cap let entry points consume every slot on large repos, so
+ * maps came back with 50 landmarks that were all the same colour. Each kind now
+ * gets its own budget, and any budget a kind cannot use is handed to the other
+ * kinds instead of being wasted. The three quotas add up to MAX_HIGHLIGHTS.
+ */
+const MAX_ENTRY_HIGHLIGHTS = 12;
+const MAX_CORE_HIGHLIGHTS = 22;
+const MAX_HOTSPOT_HIGHLIGHTS = 16;
 
 /**
  * Node centrality metrics
@@ -34,6 +46,15 @@ const TOP_SIZE_PERCENT = 0.1;        // Top 10% by visual size for node labels
 interface NodeCentrality {
   inDegree: number;   // How many files import this node
   outDegree: number;  // How many imports this node makes
+}
+
+/**
+ * Highlight counts per kind, used for both availability and allocation
+ */
+export interface HighlightQuota {
+  entry: number;
+  core: number;
+  hotspot: number;
 }
 
 /**
@@ -117,95 +138,165 @@ function calculateCentrality(layout: LayoutData): Map<string, NodeCentrality> {
 }
 
 /**
- * Generate highlights for important nodes
+ * Generate highlights for important nodes.
+ *
+ * Each kind draws from its own ranked candidate pool and its own quota, so a
+ * map shows a mix of landmarks instead of 50 of whichever kind happens to come
+ * first.
  */
 function generateHighlights(
   layout: LayoutData,
   structure: CodeStructure,
   centrality: Map<string, NodeCentrality>
 ): Highlight[] {
-  const highlights: Highlight[] = [];
-  const highlightedNodes = new Set<string>();
-
   // Create lookup map for parsed files
   const fileMap = new Map<string, ParsedFile>();
   for (const file of structure.files) {
     fileMap.set(file.path, file);
   }
 
-  // 1. Always highlight entry points
-  for (const node of layout.nodes) {
-    const file = fileMap.get(node.id);
-    if (file?.isEntryPoint) {
-      highlights.push({
-        nodeId: node.id,
-        type: 'entry',
-        reason: 'Entry point',
-        intensity: 1.0
-      });
-      highlightedNodes.add(node.id);
-    }
-  }
+  // 1. Entry point candidates, shallowest first
+  const entryPool = layout.nodes
+    .filter(node => fileMap.get(node.id)?.isEntryPoint === true)
+    .sort((a, b) => {
+      const depthDiff = a.id.split('/').length - b.id.split('/').length;
+      if (depthDiff !== 0) {
+        return depthDiff;
+      }
+      return a.id.localeCompare(b.id);
+    });
 
-  // 2. Highlight core nodes (top 10% by inDegree, excluding entries)
-  const nonEntryNodes = layout.nodes.filter(node => !highlightedNodes.has(node.id));
-  const sortedByInDegree = [...nonEntryNodes].sort((a, b) => {
-    const aMetrics = centrality.get(a.id) || { inDegree: 0, outDegree: 0 };
-    const bMetrics = centrality.get(b.id) || { inDegree: 0, outDegree: 0 };
-    return bMetrics.inDegree - aMetrics.inDegree;
+  const entryIds = new Set(entryPool.map(node => node.id));
+
+  // 2. Core candidates: most imported files (top 10% by inDegree), excluding entries
+  const importedNodes = layout.nodes
+    .filter(node => !entryIds.has(node.id) && (centrality.get(node.id)?.inDegree ?? 0) > 0)
+    .sort((a, b) => {
+      const degreeDiff =
+        (centrality.get(b.id)?.inDegree ?? 0) - (centrality.get(a.id)?.inDegree ?? 0);
+      if (degreeDiff !== 0) {
+        return degreeDiff;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+  const corePool = importedNodes.slice(
+    0,
+    Math.max(1, Math.ceil(importedNodes.length * TOP_CORE_PERCENT))
+  );
+  const coreIds = new Set(corePool.map(node => node.id));
+
+  // 3. Hotspot candidates: largest remaining files (top 5% by LOC)
+  const remainingNodes = layout.nodes
+    .filter(node => !entryIds.has(node.id) && !coreIds.has(node.id))
+    .sort((a, b) => {
+      const locDiff = b.metadata.loc - a.metadata.loc;
+      if (locDiff !== 0) {
+        return locDiff;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+  const hotspotPool = remainingNodes.slice(
+    0,
+    Math.max(1, Math.ceil(remainingNodes.length * TOP_HOTSPOT_PERCENT))
+  );
+
+  // Split the highlight budget across the three kinds
+  const allocation = allocateHighlightQuotas({
+    entry: entryPool.length,
+    core: corePool.length,
+    hotspot: hotspotPool.length
   });
 
-  const coreCount = Math.ceil(sortedByInDegree.length * TOP_CORE_PERCENT);
-  const coreNodes = sortedByInDegree.slice(0, coreCount);
+  const entryNodes = entryPool.slice(0, allocation.entry);
+  const coreNodes = corePool.slice(0, allocation.core);
+  const hotspotNodes = hotspotPool.slice(0, allocation.hotspot);
 
-  // Calculate max inDegree for normalization
+  const highlights: Highlight[] = [];
+
+  for (const node of entryNodes) {
+    highlights.push({
+      nodeId: node.id,
+      type: 'entry',
+      reason: 'Entry point',
+      intensity: 1.0
+    });
+  }
+
+  // Normalize against the selected nodes so intensity stays within [0, 1]
   const maxInDegree = Math.max(
-    ...coreNodes.map(node => centrality.get(node.id)?.inDegree || 0),
+    ...coreNodes.map(node => centrality.get(node.id)?.inDegree ?? 0),
     1
   );
 
   for (const node of coreNodes) {
-    const metrics = centrality.get(node.id);
-    if (metrics && metrics.inDegree > 0) {
-      const intensity = metrics.inDegree / maxInDegree;
-      highlights.push({
-        nodeId: node.id,
-        type: 'core',
-        reason: `Imported by ${metrics.inDegree} file${metrics.inDegree === 1 ? '' : 's'}`,
-        intensity
-      });
-      highlightedNodes.add(node.id);
-    }
+    const inDegree = centrality.get(node.id)?.inDegree ?? 0;
+    highlights.push({
+      nodeId: node.id,
+      type: 'core',
+      reason: `Imported by ${inDegree} file${inDegree === 1 ? '' : 's'}`,
+      intensity: inDegree / maxInDegree
+    });
   }
 
-  // 3. Highlight hotspots (top 5% by LOC, excluding entries and cores)
-  const remainingNodes = layout.nodes.filter(node => !highlightedNodes.has(node.id));
-  const sortedByLOC = [...remainingNodes].sort((a, b) => 
-    b.metadata.loc - a.metadata.loc
-  );
-
-  const hotspotCount = Math.ceil(sortedByLOC.length * TOP_HOTSPOT_PERCENT);
-  const hotspotNodes = sortedByLOC.slice(0, hotspotCount);
-
-  // Calculate max LOC for normalization
   const maxLOC = Math.max(
     ...hotspotNodes.map(node => node.metadata.loc),
     1
   );
 
   for (const node of hotspotNodes) {
-    const intensity = node.metadata.loc / maxLOC;
     highlights.push({
       nodeId: node.id,
       type: 'hotspot',
       reason: `Largest source file (${node.metadata.loc} LOC)`,
-      intensity
+      intensity: node.metadata.loc / maxLOC
     });
-    highlightedNodes.add(node.id);
   }
 
-  // Cap at MAX_HIGHLIGHTS
-  return highlights.slice(0, MAX_HIGHLIGHTS);
+  return highlights;
+}
+
+/**
+ * Split the highlight budget across the three highlight kinds.
+ *
+ * Each kind first takes up to its own quota. Whatever is left over, either
+ * because a kind ran out of candidates or because its quota was larger than its
+ * pool, is handed round robin to the kinds that still have candidates, starting
+ * with core (the most informative landmark) and ending with entry.
+ *
+ * @param available Number of candidates each kind can offer
+ * @returns Number of highlights to emit per kind, never more than MAX_HIGHLIGHTS in total
+ */
+export function allocateHighlightQuotas(available: HighlightQuota): HighlightQuota {
+  const allocated: HighlightQuota = {
+    entry: Math.min(available.entry, MAX_ENTRY_HIGHLIGHTS),
+    core: Math.min(available.core, MAX_CORE_HIGHLIGHTS),
+    hotspot: Math.min(available.hotspot, MAX_HOTSPOT_HIGHLIGHTS)
+  };
+
+  const fillOrder: Array<keyof HighlightQuota> = ['core', 'hotspot', 'entry'];
+  let total = allocated.entry + allocated.core + allocated.hotspot;
+
+  // Hand out the leftover budget one slot at a time
+  let progressed = true;
+  while (total < MAX_HIGHLIGHTS && progressed) {
+    progressed = false;
+
+    for (const kind of fillOrder) {
+      if (total >= MAX_HIGHLIGHTS) {
+        break;
+      }
+      if (allocated[kind] >= available[kind]) {
+        continue;
+      }
+      allocated[kind] += 1;
+      total += 1;
+      progressed = true;
+    }
+  }
+
+  return allocated;
 }
 
 /**

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { annotateLayout } from '../annotator';
+import { annotateLayout, allocateHighlightQuotas } from '../annotator';
 import type {
   LayoutData,
   CodeStructure,
@@ -769,6 +769,101 @@ describe('Agent 4: Annotator', () => {
         for (const label of result.data.labels) {
           expect(validNodeIds.has(label.nodeId)).toBe(true);
         }
+      }
+    });
+  });
+
+  describe('Highlight Quotas', () => {
+    it('should give each kind its own quota when all kinds are oversubscribed', () => {
+      const allocation = allocateHighlightQuotas({ entry: 100, core: 100, hotspot: 100 });
+
+      expect(allocation).toEqual({ entry: 12, core: 22, hotspot: 16 });
+      expect(allocation.entry + allocation.core + allocation.hotspot).toBe(50);
+    });
+
+    it('should hand unused quota to the kinds that can use it', () => {
+      // No cores available, so the 22 core slots go to hotspot then entry
+      const allocation = allocateHighlightQuotas({ entry: 40, core: 0, hotspot: 40 });
+
+      expect(allocation.core).toBe(0);
+      expect(allocation.entry).toBeGreaterThan(12);
+      expect(allocation.hotspot).toBeGreaterThan(16);
+      expect(allocation.entry + allocation.core + allocation.hotspot).toBe(50);
+    });
+
+    it('should never allocate more candidates than a kind has', () => {
+      const allocation = allocateHighlightQuotas({ entry: 3, core: 5, hotspot: 2 });
+
+      expect(allocation).toEqual({ entry: 3, core: 5, hotspot: 2 });
+    });
+
+    it('should allocate nothing when there are no candidates', () => {
+      expect(allocateHighlightQuotas({ entry: 0, core: 0, hotspot: 0 })).toEqual({
+        entry: 0,
+        core: 0,
+        hotspot: 0
+      });
+    });
+
+    it('should produce a mix of highlight types on an entry heavy repo', async () => {
+      // 60 entry points on a 300 node map: entry points must not swallow every
+      // highlight slot the way a single shared cap allowed
+      const nodes: LayoutNode[] = [];
+      const files: ParsedFile[] = [];
+      const edges: LayoutEdge[] = [];
+      const dependencies: Dependency[] = [];
+
+      for (let i = 0; i < 60; i++) {
+        const path = `packages/pkg${i}/src/index.ts`;
+        nodes.push(createNode(path, i * 20, 100, 20, 30, 100));
+        files.push(createParsedFile(path, 100, true));
+      }
+
+      const moduleCount = 240;
+      for (let i = 0; i < moduleCount; i++) {
+        const path = `src/module${i}.ts`;
+        nodes.push(createNode(path, i * 20, 300, 20, 30, 200 + i));
+        files.push(createParsedFile(path, 200 + i, false));
+      }
+
+      // Every module imports the next one, so in-degree exists across the map
+      for (let i = 0; i < moduleCount; i++) {
+        const target = `src/module${(i + 1) % moduleCount}.ts`;
+        edges.push({ source: `src/module${i}.ts`, target, strength: 1 });
+        dependencies.push({ from: `src/module${i}.ts`, to: target, type: 'import' });
+      }
+
+      const layout: LayoutData = {
+        nodes,
+        edges,
+        districts: [],
+        bounds: { width: 1920, height: 1080 }
+      };
+
+      const structure: CodeStructure = {
+        files,
+        dependencies,
+        metrics: {
+          totalFiles: files.length,
+          totalLOC: 20000,
+          languageBreakdown: { typescript: 20000 },
+          directoryDepth: 4
+        }
+      };
+
+      const result = await annotateLayout(layout, structure);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const counts = { entry: 0, core: 0, hotspot: 0 };
+        for (const highlight of result.data.highlights) {
+          counts[highlight.type] += 1;
+        }
+
+        expect(counts.entry).toBeGreaterThan(0);
+        expect(counts.core).toBeGreaterThanOrEqual(22);
+        expect(counts.hotspot).toBeGreaterThan(0);
+        expect(result.data.highlights.length).toBeLessThanOrEqual(50);
       }
     });
   });

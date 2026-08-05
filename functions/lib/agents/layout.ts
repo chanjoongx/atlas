@@ -22,6 +22,7 @@ import { scaleSqrt, scaleOrdinal } from 'd3-scale';
 import { schemeTableau10 } from 'd3-scale-chromatic';
 import type {
   CodeStructure,
+  Dependency,
   LayoutData,
   LayoutNode,
   LayoutEdge,
@@ -57,6 +58,24 @@ const ENTRY_POINT_SCALE = 1.5;
 const TEST_FILE_SCALE = 0.7;
 const CONFIG_FILE_SCALE = 0.8;
 const BOUNDS_PADDING = 50;
+
+/**
+ * Hard ceiling on rendered edges.
+ *
+ * A 500 node map stays readable up to roughly this many links; past it the
+ * force layout collapses into a hairball. Edges beyond the cap are dropped
+ * lowest value first and the drop count is reported to the caller.
+ */
+export const MAX_RENDERED_EDGES = 1500;
+
+/**
+ * Result of edge selection: the edges that will be drawn plus how many
+ * renderable edges the cap discarded.
+ */
+export interface EdgeSelection {
+  edges: LayoutEdge[];
+  dropped: number;
+}
 
 /**
  * Internal node type for D3 simulation
@@ -374,19 +393,85 @@ function calculateDistrictAnchors(
 }
 
 /**
+ * Select the dependency edges that can be drawn for a set of nodes.
+ *
+ * Both endpoints have to be rendered nodes, and the result is capped at
+ * MAX_RENDERED_EDGES. When the cap bites, static imports are kept ahead of
+ * dynamic ones and edges pointing at the most imported targets are kept ahead
+ * of the rest, so the hub structure of the repo survives.
+ *
+ * @param dependencies Dependencies from Agent 2
+ * @param nodeIds Ids of the nodes that will be rendered
+ * @returns Edges to render and the number dropped by the cap
+ */
+export function selectRenderableEdges(
+  dependencies: readonly Dependency[],
+  nodeIds: ReadonlySet<string>
+): EdgeSelection {
+  const eligible = dependencies.filter(
+    dep => nodeIds.has(dep.from) && nodeIds.has(dep.to)
+  );
+
+  if (eligible.length <= MAX_RENDERED_EDGES) {
+    return { edges: eligible.map(toLayoutEdge), dropped: 0 };
+  }
+
+  // In-degree over the eligible edges: how often each target is imported
+  const inDegree = new Map<string, number>();
+  for (const dep of eligible) {
+    inDegree.set(dep.to, (inDegree.get(dep.to) ?? 0) + 1);
+  }
+
+  const ranked = [...eligible].sort((a, b) => {
+    const strengthDiff = edgeStrength(b) - edgeStrength(a);
+    if (strengthDiff !== 0) {
+      return strengthDiff;
+    }
+
+    const degreeDiff = (inDegree.get(b.to) ?? 0) - (inDegree.get(a.to) ?? 0);
+    if (degreeDiff !== 0) {
+      return degreeDiff;
+    }
+
+    return a.from.localeCompare(b.from) || a.to.localeCompare(b.to);
+  });
+
+  return {
+    edges: ranked.slice(0, MAX_RENDERED_EDGES).map(toLayoutEdge),
+    dropped: eligible.length - MAX_RENDERED_EDGES
+  };
+}
+
+/**
+ * Edge weight by dependency kind
+ */
+function edgeStrength(dependency: Dependency): number {
+  return dependency.type === 'import' ? 1.0 : 0.5;
+}
+
+/**
+ * Convert a dependency to a layout edge
+ */
+function toLayoutEdge(dependency: Dependency): LayoutEdge {
+  return {
+    source: dependency.from,
+    target: dependency.to,
+    strength: edgeStrength(dependency)
+  };
+}
+
+/**
  * Create simulation edges from dependencies
  */
 function createSimulationEdges(
-  dependencies: Array<{ from: string; to: string; type: 'import' | 'dynamic' }>,
+  dependencies: readonly Dependency[],
   selectedPaths: Set<string>
 ): SimEdge[] {
-  return dependencies
-    .filter(dep => selectedPaths.has(dep.from) && selectedPaths.has(dep.to))
-    .map(dep => ({
-      source: dep.from,
-      target: dep.to,
-      strength: dep.type === 'import' ? 1.0 : 0.5
-    }));
+  return selectRenderableEdges(dependencies, selectedPaths).edges.map(edge => ({
+    source: edge.source,
+    target: edge.target,
+    strength: edge.strength
+  }));
 }
 
 /**

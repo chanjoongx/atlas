@@ -12,9 +12,9 @@
 import { createGitHubClientFromEnv, type Env } from '../lib/github-client';
 import { ingestRepo } from '../lib/agents/ingester';
 import { parseStructure, type ParserInput } from '../lib/agents/parser';
-import { generateLayout, type LayoutConfig } from '../lib/agents/layout';
+import { generateLayout, selectRenderableEdges, type LayoutConfig } from '../lib/agents/layout';
 import { annotateLayout } from '../lib/agents/annotator';
-import type { IngesterInput } from '../lib/types';
+import type { AnnotatedLayout, CodeStructure, IngesterInput, LayoutMeta, RepoManifest } from '../lib/types';
 
 interface AnalyzeRequestBody {
   owner: string;
@@ -145,9 +145,19 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       );
     }
 
+    // Attach repository statistics for the UI
+    const layout: AnnotatedLayout = {
+      ...annotatedResult.data,
+      meta: buildLayoutMeta(
+        ingesterResult.data,
+        parserResult.data,
+        annotatedResult.data
+      ),
+    };
+
     // Return Agent 4 output (AnnotatedLayout) - complete pipeline
     return new Response(
-      JSON.stringify(annotatedResult.data),
+      JSON.stringify(layout),
       {
         status: 200,
         headers: CORS_HEADERS,
@@ -178,6 +188,42 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
  */
 export async function onRequestOptions(): Promise<Response> {
   return handleOptions();
+}
+
+/**
+ * Build the repository statistics that travel with a layout.
+ *
+ * Counts come from the manifest and the parser, so they describe the whole
+ * repository rather than the subset that survived node selection.
+ *
+ * @param manifest Agent 1 output
+ * @param structure Agent 2 output
+ * @param layout Agent 4 output
+ * @returns Populated LayoutMeta
+ */
+function buildLayoutMeta(
+  manifest: RepoManifest,
+  structure: CodeStructure,
+  layout: AnnotatedLayout
+): LayoutMeta {
+  const nodeIds = new Set(layout.nodes.map(node => node.id));
+  const edgeSelection = selectRenderableEdges(structure.dependencies, nodeIds);
+
+  return {
+    owner: manifest.metadata.owner,
+    repo: manifest.metadata.repo,
+    branch: manifest.metadata.branch,
+    description: manifest.metadata.description,
+    stars: manifest.metadata.stars,
+    lastCommitDate: manifest.metadata.lastCommitDate,
+    totalFiles: structure.files.length,
+    renderedNodes: layout.nodes.length,
+    totalLOC: structure.metrics.totalLOC,
+    languageBreakdown: structure.metrics.languageBreakdown,
+    edgeCount: layout.edges.length,
+    droppedEdges: edgeSelection.dropped,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 /**

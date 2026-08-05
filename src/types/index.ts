@@ -91,6 +91,28 @@ export interface District {
 export interface AnnotatedLayout extends LayoutData {
   highlights: Highlight[];
   labels: Label[];
+  // Optional: cached layouts written before this field existed still deserialise
+  meta?: LayoutMeta;
+}
+
+/**
+ * Repository statistics that accompany a generated layout.
+ * Produced by the API pipeline, not by the layout or annotator agents.
+ */
+export interface LayoutMeta {
+  owner: string;
+  repo: string;
+  branch: string;
+  description: string;
+  stars: number;
+  lastCommitDate: string;
+  totalFiles: number;      // Files in the repo the parser saw, not just rendered nodes
+  renderedNodes: number;   // Nodes that survived selection
+  totalLOC: number;
+  languageBreakdown: Record<string, number>;
+  edgeCount: number;
+  droppedEdges: number;
+  generatedAt: string;     // ISO 8601
 }
 
 export interface Highlight {
