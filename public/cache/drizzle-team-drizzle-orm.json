@@ -15812,7 +15812,7 @@
     "repo": "drizzle-orm",
     "branch": "main",
     "description": "ORM",
-    "stars": 35363,
+    "stars": 35364,
     "lastCommitDate": "2026-07-23T09:09:02Z",
     "totalFiles": 1384,
     "renderedNodes": 500,
@@ -15828,6 +15828,6 @@
     },
     "edgeCount": 1500,
     "droppedEdges": 72,
-    "generatedAt": "2026-08-05T14:28:27.023Z"
+    "generatedAt": "2026-08-05T15:06:33.122Z"
   }
 }

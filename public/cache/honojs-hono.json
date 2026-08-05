@@ -10187,7 +10187,7 @@
     "repo": "hono",
     "branch": "main",
     "description": "Web framework built on Web Standards",
-    "stars": 31591,
+    "stars": 31592,
     "lastCommitDate": "2026-08-03T21:46:35Z",
     "totalFiles": 469,
     "renderedNodes": 469,
@@ -10204,6 +10204,6 @@
     },
     "edgeCount": 507,
     "droppedEdges": 0,
-    "generatedAt": "2026-08-05T14:28:00.519Z"
+    "generatedAt": "2026-08-05T15:06:16.352Z"
   }
 }
