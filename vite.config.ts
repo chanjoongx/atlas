@@ -327,8 +327,8 @@ the site described above is a continuation of it.
 
 ## Limits worth stating
 
-- Public repositories only. Private repositories are not accessible and will
-  not be.
+- Public repositories only. The service holds no credentials of any kind, so a
+  private repository is not reachable by it.
 - A map draws at most 500 files. Larger repositories are sampled by a
   prioritisation pass rather than truncated arbitrarily.
 - Import resolution is evidence based: an arc is only drawn when its target is
