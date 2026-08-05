@@ -792,6 +792,56 @@ describe('Import Path Resolution', () => {
     expect(resolveImportPath('src/index.ts', './styles.css', fileTree)).toBe('src/styles.css');
   });
 
+  /*
+   * NodeNext resolution makes an import name the emitted file, so a .ts module
+   * is written as './core/Ky.js'. Left unmapped, every import in a modern ESM
+   * package points at a file that is not in the source tree: sindresorhus/ky
+   * is 65 files and resolved none of them.
+   */
+  describe('an emitted extension standing in for a source one', () => {
+    const esm = new Set([
+      'source/index.ts',
+      'source/core/Ky.ts',
+      'source/utils/merge.ts',
+      'source/types/options.d.ts',
+      'source/legacy.mts',
+      'source/tooling.cts',
+      'source/widget.tsx',
+    ]);
+
+    it('resolves .js to .ts', () => {
+      expect(resolveImportPath('source/index.ts', './core/Ky.js', esm)).toBe('source/core/Ky.ts');
+      expect(resolveImportPath('source/index.ts', './utils/merge.js', esm)).toBe('source/utils/merge.ts');
+    });
+
+    it('resolves .js to a declaration file when that is all there is', () => {
+      expect(resolveImportPath('source/index.ts', './types/options.js', esm)).toBe('source/types/options.d.ts');
+    });
+
+    it('resolves .mjs to .mts and .cjs to .cts', () => {
+      expect(resolveImportPath('source/index.ts', './legacy.mjs', esm)).toBe('source/legacy.mts');
+      expect(resolveImportPath('source/index.ts', './tooling.cjs', esm)).toBe('source/tooling.cts');
+    });
+
+    it('resolves .jsx to .tsx', () => {
+      expect(resolveImportPath('source/index.ts', './widget.jsx', esm)).toBe('source/widget.tsx');
+    });
+
+    it('prefers a real file of that name over the mapping', () => {
+      const both = new Set(['src/a.ts', 'src/vendor.js', 'src/vendor.ts']);
+      expect(resolveImportPath('src/a.ts', './vendor.js', both)).toBe('src/vendor.js');
+    });
+
+    it('still returns null when neither spelling exists', () => {
+      expect(resolveImportPath('source/index.ts', './nowhere.js', esm)).toBeNull();
+    });
+
+    it('does not let a file resolve to itself', () => {
+      const self = new Set(['src/loop.ts']);
+      expect(resolveImportPath('src/loop.ts', './loop.js', self)).toBeNull();
+    });
+  });
+
   it('should resolve an extensionless relative import', () => {
     expect(resolveImportPath('src/index.ts', './lib/util', fileTree)).toBe('src/lib/util.ts');
     expect(resolveImportPath('src/index.ts', './app', fileTree)).toBe('src/app.tsx');

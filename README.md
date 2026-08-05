@@ -9,7 +9,7 @@ Atlas turns a public GitHub repository into an interactive isometric map. Direct
 [**Open the live demo**](https://atlascity.dev) &nbsp;·&nbsp; [Try Hono](https://atlascity.dev/?repo=honojs/hono) &nbsp;·&nbsp; [Try Drizzle ORM](https://atlascity.dev/?repo=drizzle-team/drizzle-orm)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0f62fe?style=flat-square)](./LICENSE)
-![Tests](https://img.shields.io/badge/tests-262%20passing-42be65?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-269%20passing-42be65?style=flat-square)
 ![Built on](https://img.shields.io/badge/Cloudflare-Pages%20Functions-f38020?style=flat-square)
 [![Hackathon](https://img.shields.io/badge/IBM%20Bob%20Hackathon-2nd%20of%20503-ff832b?style=flat-square)](https://lablab.ai/ai-hackathons/ibm-bob-hackathon)
 
@@ -112,13 +112,13 @@ The prize belongs to the 48 hour build. The site at atlascity.dev is a continuat
 
 **Built during the 48 hours:** the four agent pipeline, the force layout, the 2D renderer, PNG export, the demo cache, 78 tests.
 
-**Added since:** the isometric renderer, the Carbon and Paper themes, the brand and icon set, the file inspector and legend, shareable URLs, the animated skyline, real import resolution (the original shipped with a resolver that could fabricate targets, so every map drew zero dependency arcs), per kind landmark quotas, archive based ingestion that needs no GitHub credentials at all, and the test suite at 262.
+**Added since:** the isometric renderer, the Carbon and Paper themes, the brand and icon set, the file inspector and legend, shareable URLs, the animated skyline, real import resolution (the original shipped with a resolver that could fabricate targets, so every map drew zero dependency arcs), per kind landmark quotas, archive based ingestion that needs no GitHub credentials at all, and the test suite at 269.
 
 | Stat | Count |
 |---|---|
 | Bob sessions | 12, exported to [`bob_sessions/`](./bob_sessions/) |
 | Pipeline agents | Ingester, Parser, Layout, Annotator |
-| Tests | 262 passing |
+| Tests | 269 passing |
 
 ---
 

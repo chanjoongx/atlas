@@ -148,6 +148,26 @@ export const ASSET_PATTERNS = [
 export const RESOLUTION_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.d.ts'];
 
 /**
+ * How a TypeScript file is spelled in a modern ESM import.
+ *
+ * Under NodeNext resolution an import must name the file that will be *emitted*,
+ * so a `.ts` module is imported as `./core/Ky.js`. That is not a quirk of one
+ * project, it is what TypeScript requires of every package that sets
+ * `"moduleResolution": "NodeNext"`, which is most new ones.
+ *
+ * Without this mapping such a repository resolves nothing at all: every import
+ * points at a `.js` file that does not exist in the source tree, so the map
+ * comes back with zero dependency arcs. sindresorhus/ky is 65 files and drew
+ * none of them.
+ */
+const EMITTED_TO_SOURCE: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['.js', ['.ts', '.tsx', '.d.ts']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts', '.d.mts']],
+  ['.cjs', ['.cts', '.d.cts']],
+];
+
+/**
  * Most entry points a single repository may claim. Without a cap a monorepo
  * turns every package index into a landmark and drowns out everything else.
  */
@@ -709,6 +729,23 @@ function probeFilePath(base: string, filePaths: ReadonlySet<string>): string | n
 
   if (filePaths.has(base)) {
     return base;
+  }
+
+  // An emitted extension standing in for a source one, before trying to append
+  // anything: `./core/Ky.js` is how `./core/Ky.ts` has to be written under
+  // NodeNext. A real `.js` file of the same name still wins, because the exact
+  // match above is tested first.
+  for (const [emitted, sources] of EMITTED_TO_SOURCE) {
+    if (!base.endsWith(emitted)) {
+      continue;
+    }
+    const stem = base.slice(0, -emitted.length);
+    for (const ext of sources) {
+      const candidate = `${stem}${ext}`;
+      if (filePaths.has(candidate)) {
+        return candidate;
+      }
+    }
   }
 
   for (const ext of RESOLUTION_EXTENSIONS) {
