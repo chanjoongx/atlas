@@ -626,10 +626,21 @@ function calculateBounds(
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    // Scale all node positions
+    // Scale positions AND sizes.
+    //
+    // Rescaling only the positions was silently wrong: forceCollide had
+    // separated the nodes by a radius derived from their width and height, and
+    // pulling the centres closer while leaving the sizes alone broke that
+    // guarantee. Measured across the three demo repositories, all of which take
+    // this branch, neighbours ended up as close as 0.57 of the separation their
+    // sizes claimed, and dozens of footprints overlapped. The renderer sorts by
+    // depth with no z-buffer, so intersecting solids have no defined answer and
+    // show up as one building slicing into its neighbour when zoomed in.
     for (const node of nodes) {
       node.x = (node.x - centerX) * scale + canvasWidth / 2;
       node.y = (node.y - centerY) * scale + canvasHeight / 2;
+      node.width *= scale;
+      node.height *= scale;
     }
 
     return { width: canvasWidth, height: canvasHeight };

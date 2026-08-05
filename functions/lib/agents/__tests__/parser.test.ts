@@ -360,6 +360,85 @@ describe('Agent 2: Structure Parser', () => {
   });
 
   describe('Import Extraction', () => {
+    it('does not backtrack catastrophically on hostile file content', async () => {
+      // File contents come from any public repository on GitHub, so the import
+      // matcher is attacker controlled input. An earlier pattern combined three
+      // whitespace matching constructs over the same run, and `import` followed
+      // by a long whitespace run with no quote made it re-partition that run:
+      // 68ms at 800 characters, 502ms at 1600, 4.5 seconds at 3200. The fetch
+      // budget allows 400 KB per file, so one crafted file could pin a
+      // production CPU core.
+      //
+      // The gap between linear and exponential here is several orders of
+      // magnitude, so this budget is generous enough never to flake and still
+      // catches any reintroduction.
+      const input: ParserInput = {
+        tree: [
+          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      const hostile = `\nimport${' '.repeat(60_000)}x\nimport { a } from './utils';\n`;
+      mockBlobContent(mockOctokit, { a1: hostile });
+
+      const started = Date.now();
+      const result = await parseStructure(input, mockOctokit);
+      const elapsed = Date.now() - started;
+
+      expect(result.success).toBe(true);
+      expect(elapsed).toBeLessThan(2000);
+
+      // And the real import in the same file is still found.
+      if (result.success) {
+        expect(result.data.dependencies.some(d => d.to === 'src/utils.ts')).toBe(true);
+      }
+    });
+
+    it('leaves a dynamic import to the dynamic matcher', async () => {
+      // The static matcher excludes `(` so `import('./x')` keeps its own edge
+      // type. Without that exclusion the static pass claims it first and the
+      // dependency is recorded as a static import.
+      const input: ParserInput = {
+        tree: [
+          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/lazy.ts', type: 'file', size: 500, sha: 'a2' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, { a1: "const m = await import('./lazy');\n" });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const edge = result.data.dependencies.find(d => d.to === 'src/lazy.ts');
+        expect(edge?.type).toBe('dynamic');
+      }
+    });
+
+    it('does not treat a string assigned by an export as an import', async () => {
+      const input: ParserInput = {
+        tree: [
+          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
+          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
+        ],
+        owner: 'test',
+        repo: 'test-repo',
+      };
+
+      mockBlobContent(mockOctokit, { a1: "export const path = './utils';\n" });
+
+      const result = await parseStructure(input, mockOctokit);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.dependencies).toHaveLength(0);
+      }
+    });
+
     it('should extract ES6 imports', async () => {
       // Import targets must exist in the tree: resolution is evidence based
       const input: ParserInput = {

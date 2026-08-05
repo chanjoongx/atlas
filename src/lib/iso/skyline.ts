@@ -81,6 +81,11 @@ const REBUILD_MS = 1500;
 /** Beacon breathing period, in milliseconds. */
 const PULSE_MS = 3400;
 
+/** Peak of `easeOutBack` with the overshoot constant below, as a multiplier. */
+const SETTLE_OVERSHOOT = 1.098;
+/** How far a landmark beacon rises above its roof, in world units. */
+const BEACON_HEIGHT = 46;
+
 /* -------------------------------------------------------------------------- */
 /* Light                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -161,7 +166,13 @@ export function createSkyline(
     // so a rotating skyline never breathes in and out of its own margins.
     const reach = radius * Math.SQRT2;
     const halfWidth = reach * TILE_X;
-    const top = -(reach * TILE_Y) - MAX_HEIGHT * Z_SCALE;
+    // A tower can stand taller than MAX_HEIGHT for a moment: the settle easing
+    // overshoots its target by about 9.7 percent, and a landmark carries a
+    // beacon above its roof on top of that. Reserving only MAX_HEIGHT left
+    // three tenths of a unit of margin out of three hundred, so roughly one
+    // rebuild in twenty would have clipped a beacon against the top edge of
+    // the hero. They retarget every second, forever.
+    const top = -(reach * TILE_Y) - (MAX_HEIGHT * SETTLE_OVERSHOOT + BEACON_HEIGHT) * Z_SCALE;
     const bottom = reach * TILE_Y + PLATE_THICKNESS * Z_SCALE;
 
     const scale = Math.min(
@@ -265,8 +276,11 @@ export function createSkyline(
     const hy = (district.maxY - district.minY) / 2;
     paintBox(ctx, cx, cy, hx, hy, -PLATE_THICKNESS, PLATE_THICKNESS, angle, {
       top: material.top,
-      side: () => material.left,
-      sideAlt: material.right,
+      // Shaded by the same light the towers use. Picking the two side colours
+      // by face parity instead looked identical at a glance and was inverted
+      // for half of every revolution: the slab was lit from one side while the
+      // buildings standing on it were lit from the other.
+      side: (normal) => (Math.cos(normal - LIGHT_ANGLE) > 0 ? material.left : material.right),
       stroke: material.edge,
     });
   }
@@ -294,7 +308,7 @@ export function createSkyline(
     const pulse = reducedMotion ? 0.7 : 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(phase * Math.PI * 2));
     const rotated = rotateFree(lot.x, lot.y, angle);
     const base = toScreen(project(rotated.x, rotated.y, height));
-    const tip = toScreen(project(rotated.x, rotated.y, height + 46));
+    const tip = toScreen(project(rotated.x, rotated.y, height + BEACON_HEIGHT));
     const beacon = signalColor('entry', theme);
 
     const gradient = ctx.createLinearGradient(base.x, base.y, tip.x, tip.y);
@@ -326,8 +340,6 @@ export function createSkyline(
     top: string;
     /** Given the outward normal angle of a side face, return its colour. */
     side: (normalAngle: number) => string;
-    /** Optional flat colour for every side, used by plates. */
-    sideAlt?: string;
     stroke?: string;
   }
 
@@ -368,7 +380,7 @@ export function createSkyline(
       const j = (i + 1) % 4;
       const quad = [lo[i], lo[j], hi[j], hi[i]];
       if (signedArea(quad) <= 0) continue; // face is pointing away
-      ctx.fillStyle = paint.sideAlt && i % 2 === 0 ? paint.sideAlt : paint.side(normals[i] + angle);
+      ctx.fillStyle = paint.side(normals[i] + angle);
       fillPolygon(ctx, quad);
     }
 

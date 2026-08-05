@@ -151,7 +151,9 @@ export async function downloadPng(options: ExportOptions, filename: string): Pro
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Revoked on a later task. Chrome copes with an immediate revoke, other
+  // engines have historically raced the download against it.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function canCopyImages(): boolean {

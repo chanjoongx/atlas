@@ -87,11 +87,28 @@ export function CityMap({
       rendererRef.current = null;
       onReady(null);
     };
-    // Deliberately only re-created when the canvas itself changes size from
-    // zero, or the scene identity changes. Option changes go through update().
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene, size.width === 0 || size.height === 0]);
+    /*
+     * `scene` is deliberately NOT a dependency.
+     *
+     * It used to be, and that one entry caused four separate defects, because
+     * a new `Scene` object is produced every time the height exaggeration
+     * slider moves. Tearing the renderer down and building a new one meant:
+     * d3-zoom read the old transform back off the element's `__zoom` property
+     * while the new renderer believed it was at identity, so the map snapped
+     * to fit and then teleported back on the next scroll notch; the renderer's
+     * copy of the selection was lost while React still held it, so the next
+     * click on the selected building re-selected instead of closing it; and an
+     * in flight camera transition from the dead renderer kept driving the live
+     * one's camera group.
+     *
+     * Scene swaps go through `update()`, which is written for exactly that.
+     * eslint-disable-next-line react-hooks/exhaustive-deps
+     */
+  }, [size.width === 0 || size.height === 0]);
 
+  // Safe to run on the same commit as the effect above: `update()` compares the
+  // options it is handed against the ones it already holds and does nothing
+  // when they match, so the renderer's own first draw is never overwritten.
   useEffect(() => {
     rendererRef.current?.update({
       scene,

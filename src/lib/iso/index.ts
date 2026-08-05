@@ -60,7 +60,15 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
   let fitScale = 1;
   let selectedId: string | null = null;
   let hoveredId: string | null = null;
+  // Kept here rather than only in the DOM. `render()` replaces the whole SVG,
+  // so a spotlight written as classes on building groups disappeared on every
+  // rotation, theme toggle and option change while the legend still showed the
+  // district as pinned, and the only way back was to unpin and pin again.
+  let focusedDistrictName: string | null = null;
   let transform: ZoomTransform = zoomIdentity;
+  let lastZoomAt = 0;
+  let pendingScale = 1;
+  let entranceTimer = 0;
 
   const svg = select(svgElement);
   const zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> = zoom<SVGSVGElement, unknown>()
@@ -110,13 +118,19 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
       if (city) {
         city.classList.add('is-entering');
         // The class is dropped once the sweep is over so the next render can
-        // add it again and actually restart the animation.
-        window.setTimeout(() => city.classList.remove('is-entering'), ENTRANCE_MS);
+        // add it again and actually restart the animation. The handle is kept
+        // so `destroy()` does not leave a timer pointing at a detached node.
+        window.clearTimeout(entranceTimer);
+        entranceTimer = window.setTimeout(
+          () => city.classList.remove('is-entering'),
+          ENTRANCE_MS,
+        );
       }
     }
 
     applyTransform();
     paintFocus();
+    applyDistrictFocus();
   }
 
   function applyTransform(): void {
@@ -230,6 +244,12 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
   }
 
   function focusDistrict(name: string | null): void {
+    focusedDistrictName = name;
+    applyDistrictFocus();
+  }
+
+  function applyDistrictFocus(): void {
+    const name = focusedDistrictName;
     const city = svgElement.querySelector<SVGGElement>('.atlas-city');
     if (!city) return;
     city.querySelectorAll<SVGGElement>('.is-district-focus').forEach((el) =>
@@ -245,11 +265,39 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
       .forEach((el) => el.classList.add('is-district-focus'));
   }
 
+  /**
+   * Zoom by a factor.
+   *
+   * An unnamed transition cancels whichever one is already running, and
+   * `scaleBy` reads the current transform when its transition *starts*, so a
+   * cancelled step contributed nothing at all: three clicks 120ms apart landed
+   * on 2.58x instead of 3.05x, and holding the `+` key through fifteen
+   * auto-repeats produced exactly one 1.45x step. Repeat input is applied
+   * immediately instead, and only an isolated press gets the animation.
+   */
   function zoomBy(factor: number): void {
-    svg.transition().duration(220).call(zoomBehavior.scaleBy, factor);
+    const now = performance.now();
+    const chaining = now - lastZoomAt < 400;
+    lastZoomAt = now;
+
+    // Accumulate against the pending target, not against wherever the camera
+    // happens to be mid animation, and move with `scaleTo` rather than
+    // `scaleBy`. `scaleBy` reads the live transform when its transition
+    // starts, so interrupting one threw away however much of that step had not
+    // been applied yet: three clicks 120ms apart landed on 2.58x rather than
+    // 3.05x, and holding the key produced a single step. An absolute target
+    // cannot lose a step no matter how often it is interrupted.
+    const base = chaining ? pendingScale : transform.k;
+    pendingScale = Math.min(Math.max(base * factor, MIN_ZOOM), MAX_ZOOM);
+
+    svg.interrupt();
+    svg.transition().duration(chaining ? 110 : 220).call(zoomBehavior.scaleTo, pendingScale);
   }
 
   function resetView(): void {
+    pendingScale = 1;
+    lastZoomAt = 0;
+    svg.interrupt();
     svg.transition().duration(380).call(zoomBehavior.transform, zoomIdentity);
   }
 
@@ -266,6 +314,8 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
     const screenY = matrix ? matrix.d * cy + matrix.f : cy;
 
     const k = Math.max(transform.k, 2.2);
+    pendingScale = k;
+    lastZoomAt = 0;
     svg
       .transition()
       .duration(520)
@@ -275,15 +325,43 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
       );
   }
 
+  /**
+   * Apply new options, and draw only if something actually changed.
+   *
+   * The idempotence is load bearing rather than an optimisation. React's
+   * StrictMode mounts, unmounts and mounts again in development, so a guard
+   * held in a `useRef` on the caller side only ever suppresses the very first
+   * sync: on the second mount the update ran, replaced three thousand elements
+   * eleven milliseconds after the renderer had drawn them, and wiped the
+   * `is-entering` class the entrance animation depends on. Deciding here, from
+   * the options themselves, cannot be defeated by how many times the caller is
+   * mounted.
+   */
   function update(next: Partial<IsoOptions>): void {
     const sceneChanged = next.scene !== undefined && next.scene !== options.scene;
     const azimuthChanged = next.azimuth !== undefined && next.azimuth !== options.azimuth;
+    const visualChanged =
+      sceneChanged ||
+      azimuthChanged ||
+      (next.theme !== undefined && next.theme !== options.theme) ||
+      (next.showEdges !== undefined && next.showEdges !== options.showEdges) ||
+      (next.showLabels !== undefined && next.showLabels !== options.showLabels) ||
+      (next.showGrid !== undefined && next.showGrid !== options.showGrid) ||
+      (next.width !== undefined && next.width !== options.width) ||
+      (next.height !== undefined && next.height !== options.height);
+
     options = { ...options, ...next };
+    if (!visualChanged) return;
 
     if (sceneChanged) {
       scene = options.scene;
       if (selectedId && !scene.nodeById.has(selectedId)) selectedId = null;
-      hoveredId = null;
+      if (hoveredId !== null) {
+        hoveredId = null;
+        // Otherwise the tooltip is stranded on screen describing a node from
+        // the previous scene.
+        options.onHover?.(null, null);
+      }
     }
     render(sceneChanged || azimuthChanged);
   }
@@ -308,7 +386,18 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
     svgElement.removeEventListener('pointermove', onPointerMove);
     svgElement.removeEventListener('pointerleave', onPointerLeave);
     svgElement.removeEventListener('click', onClick);
+    window.clearTimeout(entranceTimer);
+
+    // A camera transition is attached to the element, not to this closure, so
+    // without the interrupt a zoom started just before teardown carries on
+    // driving whatever renderer comes next. And d3-zoom stores its transform
+    // on the element as `__zoom` and adopts it when a new behaviour is
+    // installed, so leaving it behind makes a fresh renderer disagree with the
+    // DOM about where the camera is.
+    svg.interrupt();
     svg.on('.zoom', null);
+    delete (svgElement as unknown as { __zoom?: unknown }).__zoom;
+
     svgElement.innerHTML = '';
   }
 

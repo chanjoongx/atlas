@@ -789,7 +789,30 @@ function extractScriptDependencies(
   }
 
   // ES imports and re-exports: import ... from '...', export ... from '...', import '...'
-  const importRegex = /(?:^|[\s;}])(?:import|export)\s+(?:[\w*${}\s,]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+  //
+  // This runs over file contents downloaded from any public repository on
+  // GitHub, so it has to be safe against input written specifically to break
+  // it. The previous pattern was not:
+  //
+  //   /(?:^|[\s;}])(?:import|export)\s+(?:[\w*${}\s,]*?\s+from\s+)?['"]...['"]/
+  //
+  // Three whitespace matching constructs, `\s+` then a class containing `\s`
+  // then `\s+`, all competing to consume the same run. A file containing
+  // `import` followed by a long run of spaces and no quote made the engine
+  // re-partition that run: measured at 68ms for 800 spaces, 502ms for 1600,
+  // and 4.5 seconds for 3200, roughly nine times worse per doubling. The fetch
+  // budget allows 400 KB per file, which is seven more doublings, so one
+  // crafted file in one public repository could pin a production CPU core for
+  // as long as the runtime allowed.
+  //
+  // The replacement has a single bounded lazy class and no adjacent quantifier
+  // competing with it, so the work per starting position is capped at the
+  // bound rather than growing with the input. Excluding `=` and `;` keeps it
+  // to real import and export-from statements rather than matching the first
+  // string literal after any `export const`.
+  // `(` is excluded as well, so `import('./x')` is left to the dynamic import
+  // matcher below and keeps its own edge type rather than being swallowed here.
+  const importRegex = /(?:^|[\s;}])(?:import|export)\b[^'"=;(]{0,300}?['"]([^'"\n]{1,512})['"]/g;
   let match: RegExpExecArray | null;
   while ((match = importRegex.exec(content)) !== null) {
     add(match[1], 'import');

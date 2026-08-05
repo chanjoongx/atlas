@@ -225,7 +225,10 @@ function fitCity(
   const cityHeight = Math.max(bounds.maxY - bounds.minY, 1);
   const usableWidth = width * (1 - padding * 2);
   const usableHeight = height * (1 - padding * 2);
-  const scale = Math.min(usableWidth / cityWidth, usableHeight / cityHeight);
+  // Clamped away from zero. Label sizes and stroke widths are divided by this,
+  // so a zero would put Infinity into font-size and stroke-width attributes,
+  // which SVG drops silently rather than reporting.
+  const scale = Math.max(Math.min(usableWidth / cityWidth, usableHeight / cityHeight), 1e-6);
 
   return {
     scale,

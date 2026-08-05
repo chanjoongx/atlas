@@ -18,7 +18,21 @@ const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const NOISE = new Set(['tree', 'blob', 'commits', 'releases', 'issues', 'pulls', 'tags', 'wiki']);
 
+/**
+ * Longest input worth looking at.
+ *
+ * An owner and a repository top out around 140 characters together, and this
+ * runs on whatever arrives in `?repo=`, which anyone can put in a link. The
+ * trailing separator strip below is quadratic in a run of slashes, so a link
+ * carrying a few hundred thousand of them froze the tab for seconds. Refusing
+ * to look at anything that could not possibly be a repository is cheaper than
+ * making every step linear.
+ */
+const MAX_INPUT_LENGTH = 400;
+
 export function parseRepoRef(input: string): RepoRef | null {
+  if (typeof input !== 'string' || input.length > MAX_INPUT_LENGTH) return null;
+
   let text = input.trim();
   if (!text) return null;
 

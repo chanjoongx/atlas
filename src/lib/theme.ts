@@ -87,6 +87,12 @@ export function useTheme(): {
     if (readStoredTheme() || typeof matchMedia !== 'function') return;
     const mq = matchMedia('(prefers-color-scheme: light)');
     const onChange = () => {
+      // Re-checked here, not only at mount. A visitor who arrives with no
+      // stored preference gets this listener, and it used to stay live after
+      // they picked a theme: anyone on scheduled dark mode had their choice
+      // undone at sunset, with the page and the stored preference disagreeing
+      // until the next reload.
+      if (readStoredTheme()) return;
       const next: ThemeName = mq.matches ? 'paper' : 'carbon';
       applyTheme(next);
       setThemeState(next);
