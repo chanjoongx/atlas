@@ -76,8 +76,12 @@
 
   --text-primary: #e9eaec;
   --text-secondary: #a2a9b4;
-  --text-tertiary: #767d89;
-  --text-placeholder: #565d68;
+  /* Tertiary carries the legend rules, stats labels, map hints and footer
+     links, so it is held to 4.5:1 against the *worst* surface it lands on,
+     which is --bg-surface-hover rather than the canvas. It reaches 4.96 there
+     and 5.75 on --bg-surface, still well clear of secondary at 6.66. */
+  --text-tertiary: #8a919c;
+  --text-placeholder: #7a818d;
   --text-inverse: #0b0c0e;
 
   --accent: #4589ff;
@@ -86,6 +90,16 @@
   --accent-subtle: rgba(69, 137, 255, 0.14);
   --accent-ring: rgba(69, 137, 255, 0.45);
   --accent-contrast: #ffffff;
+
+  /* Accent as a *filled* surface carrying white text, which is a different
+     problem from accent as a stroke or a link. #4589ff is blue-50: correct for
+     a 1px rule against near black, and only 3.35:1 under white text, so the
+     primary call to action on the landing page failed. Filled surfaces drop to
+     blue-60, which is what IBM Carbon's own dark theme uses for the same
+     reason, and which reads 5.00:1. */
+  --accent-solid: #0f62fe;
+  --accent-solid-hover: #0353e9;
+  --accent-solid-active: #002d9c;
 
   --signal-entry: #82cfff;
   --signal-core: #f4f4f4;
@@ -144,8 +158,8 @@
 
   --text-primary: #1c1a17;
   --text-secondary: #55514a;
-  --text-tertiary: #7d776d;
-  --text-placeholder: #9a9488;
+  --text-tertiary: #6e685e;
+  --text-placeholder: #7b756b;
   --text-inverse: #ffffff;
 
   --accent: #0f62fe;
@@ -154,6 +168,11 @@
   --accent-subtle: rgba(15, 98, 254, 0.09);
   --accent-ring: rgba(15, 98, 254, 0.38);
   --accent-contrast: #ffffff;
+
+  /* Already blue-60 here, so the light theme needs no separate solid ramp. */
+  --accent-solid: #0f62fe;
+  --accent-solid-hover: #0353e9;
+  --accent-solid-active: #002d9c;
 
   --signal-entry: #0072c3;
   --signal-core: #4b4740;

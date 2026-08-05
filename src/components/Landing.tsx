@@ -43,7 +43,7 @@ export function Landing({ theme, loading, onAnalyze }: LandingProps) {
         drawing itself with the real projection and the real palette, which is
         a better argument than any sentence in the column beside it.
       */}
-      <section className="px-6 pb-2 pt-10 sm:pt-14">
+      <section className="pad-safe-x pb-2 pt-10 [--pad-x:1.5rem] sm:pt-14">
         <div className="mx-auto grid max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)] lg:gap-10">
           <div className="flex flex-col">
             <p className="border-line text-tertiary mb-5 inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1 text-2xs">
@@ -79,13 +79,13 @@ export function Landing({ theme, loading, onAnalyze }: LandingProps) {
         </div>
       </section>
 
-      <section className="px-6 pb-12 pt-4">
+      <section className="pad-safe-x pb-12 pt-4 [--pad-x:1.5rem]">
         <div className="mx-auto max-w-6xl">
           <DemoRepoCards onAnalyze={onAnalyze} loading={loading} />
         </div>
       </section>
 
-      <section className="border-line border-t px-6 py-12">
+      <section className="border-line pad-safe-x border-t py-12 [--pad-x:1.5rem]">
         <div className="mx-auto max-w-5xl">
           <p className="eyebrow">How a map gets built</p>
           <h2 className="text-primary mt-2 text-xl">Four agents, one request, no model in the loop.</h2>
@@ -120,7 +120,7 @@ export function Landing({ theme, loading, onAnalyze }: LandingProps) {
         time, which is only legitimate because what a visitor reads here and
         what a search engine is told are the same words.
       */}
-      <section className="border-line border-t px-6 py-12">
+      <section className="border-line pad-safe-x border-t py-12 [--pad-x:1.5rem]">
         <div className="mx-auto max-w-3xl">
           <p className="eyebrow">Questions</p>
           <dl className="mt-5 space-y-6">

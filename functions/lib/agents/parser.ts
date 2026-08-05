@@ -1,13 +1,15 @@
-import type { Octokit } from '@octokit/rest';
 import type { FileNode, CodeStructure, ParsedFile, Dependency, RepoMetrics, FileType, AgentResult } from '../types';
 
 /**
  * Input contract for Agent 2: Structure Parser
+ *
+ * The parser fetches nothing. Both the tree and the file contents arrive from
+ * the ingester, which reads them out of a single repository archive.
  */
 export interface ParserInput {
   tree: FileNode[];
-  owner: string;
-  repo: string;
+  /** Decoded text, keyed by repo relative path. Missing entries were skipped. */
+  contents: ReadonlyMap<string, string>;
 }
 
 /**
@@ -141,49 +143,9 @@ export const ASSET_PATTERNS = [
 ];
 
 /**
- * Extensions worth downloading. These either yield import edges or, at minimum,
- * an exact line count instead of a size based estimate.
- */
-export const FETCHABLE_EXTENSIONS = [
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.go', '.rs', '.java', '.rb', '.php',
-];
-
-/**
  * Extensions probed, in order, when an import specifier omits its extension.
  */
 export const RESOLUTION_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.d.ts'];
-
-/**
- * Hard ceiling on blob downloads per analysis.
- *
- * Every download is one Cloudflare subrequest (1000 per request on Workers Paid,
- * 50 on the free plan), so this number is the single lever for request cost.
- * The layout renders at most 500 nodes, and content for the highest value half
- * of those is enough to draw a representative dependency graph.
- */
-export const MAX_CONTENT_FETCHES = 240;
-
-/**
- * Blob requests kept in flight at once. Bounded so a large repo cannot open
- * hundreds of sockets at the same time.
- */
-export const FETCH_CONCURRENCY = 14;
-
-/**
- * Files larger than this (bytes) are never downloaded. Generated bundles and
- * lock style files cost time and add almost no dependency signal.
- */
-export const MAX_FETCH_FILE_SIZE = 400 * 1024;
-
-/**
- * Consecutive blob failures that end the download pass.
- *
- * One failure is a bad blob. A run of them means the runtime is rejecting
- * every further call, which is what hitting the subrequest budget looks like
- * from inside the request.
- */
-export const CONSECUTIVE_FAILURE_LIMIT = 8;
 
 /**
  * Most entry points a single repository may claim. Without a cap a monorepo
@@ -193,8 +155,13 @@ export const MAX_ENTRY_POINTS = 20;
 
 /**
  * Most tsconfig files read for path aliases, and how deep they may live.
+ *
+ * The ingester retains every tsconfig it meets, cheaply. This is the narrower
+ * question of which ones are allowed to define aliases: one belonging to a real
+ * package root, near the top of the tree. A tsconfig buried in a test fixture
+ * describes that fixture, not the repository.
  */
-const MAX_TSCONFIG_FETCHES = 8;
+const MAX_ALIAS_CONFIGS = 8;
 const MAX_TSCONFIG_DEPTH = 3;
 const MAX_TSCONFIG_SIZE = 64 * 1024;
 
@@ -215,19 +182,15 @@ interface AliasRule {
 /**
  * Agent 2: Structure Parser
  *
- * Extracts code structure, dependencies, and metrics from a file tree.
- * Downloads content for the highest value source files (bounded by
- * MAX_CONTENT_FETCHES) and resolves every import against the real file tree,
- * so an edge is only emitted when its target actually exists in the repo.
+ * Extracts code structure, dependencies, and metrics from a file tree and the
+ * file contents the ingester already read. Every import is resolved against the
+ * real file tree, so an edge is only emitted when its target actually exists in
+ * the repo.
  *
- * @param input Parser input with file tree and repo coordinates
- * @param octokit Authenticated Octokit client
+ * @param input File tree and the contents that came with it
  * @returns CodeStructure with parsed files, dependencies, and metrics
  */
-export async function parseStructure(
-  input: ParserInput,
-  octokit: Octokit
-): Promise<AgentResult<CodeStructure>> {
+export async function parseStructure(input: ParserInput): Promise<AgentResult<CodeStructure>> {
   try {
     // Validate input
     if (!input.tree || input.tree.length === 0) {
@@ -243,22 +206,14 @@ export async function parseStructure(
     // Filter out directories, only process files
     const files = input.tree.filter(node => node.type === 'file');
     const filePaths = new Set(files.map(file => file.path));
+    const fileContents = input.contents;
 
     // Entry points are resolved against real package roots, then capped
     const packageRoots = collectPackageRoots(filePaths);
     const entryPoints = selectEntryPoints(files, packageRoots);
 
-    // Identify files to fetch content for, then fetch them with bounded concurrency
-    const filesToFetch = identifyFilesToFetch(files, entryPoints, packageRoots);
-    const fileContents = await fetchFileContents(
-      filesToFetch,
-      input.owner,
-      input.repo,
-      octokit
-    );
-
     // Path aliases (optional signal, silently skipped when tsconfig is unreadable)
-    const aliasRules = buildAliasRules(fileContents);
+    const aliasRules = buildAliasRules(selectAliasConfigs(files, packageRoots), fileContents);
 
     // Process each file
     const parsedFiles: ParsedFile[] = [];
@@ -394,78 +349,23 @@ export function selectEntryPoints(
 }
 
 /**
- * Identify which files to download content for.
+ * Select the tsconfig files allowed to define path aliases.
  *
- * Ranking mirrors prioritizeFiles() in layout.ts so the downloaded files
- * overlap the nodes that actually get rendered. Without that overlap an edge
- * is discarded because one of its endpoints was never selected as a node.
+ * A tsconfig only governs its own directory, so the candidates are the repo
+ * root and real package roots near the top of the tree, shallowest first. The
+ * cap keeps a monorepo with a hundred packages from turning alias resolution
+ * into a hundred rule sets consulted for every bare specifier.
+ *
+ * @param files Every file in the repository
+ * @param packageRoots Directories that own a package
+ * @returns Paths of the tsconfig files to read, shallowest first
  */
-function identifyFilesToFetch(
-  files: FileNode[],
-  entryPoints: ReadonlySet<string>,
-  packageRoots: ReadonlySet<string>
-): FileNode[] {
-  const selected: FileNode[] = [];
-  const selectedPaths = new Set<string>();
-
-  function take(file: FileNode): void {
-    if (selectedPaths.has(file.path) || selected.length >= MAX_CONTENT_FETCHES) {
-      return;
-    }
-    selectedPaths.add(file.path);
-    selected.push(file);
-  }
-
-  // 1. Root manifest: cheap, and callers expect it to be present
-  const rootManifest = files.find(file => file.path === 'package.json');
-  if (rootManifest) {
-    take(rootManifest);
-  }
-
-  // 2. tsconfig files carry the path aliases used to resolve non relative imports
-  const tsconfigs = files
+function selectAliasConfigs(files: FileNode[], packageRoots: ReadonlySet<string>): string[] {
+  return files
     .filter(file => isAliasConfigCandidate(file, packageRoots))
-    .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path))
-    .slice(0, MAX_TSCONFIG_FETCHES);
-
-  for (const tsconfig of tsconfigs) {
-    take(tsconfig);
-  }
-
-  // 3. Source files, highest value first
-  const candidates = files
-    .filter(file => isFetchableSource(file, entryPoints))
-    .map(file => ({ file, score: scoreFetchCandidate(file, entryPoints.has(file.path)) }))
-    .sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
-
-  for (const candidate of candidates) {
-    if (selected.length >= MAX_CONTENT_FETCHES) {
-      break;
-    }
-    take(candidate.file);
-  }
-
-  return selected;
-}
-
-/**
- * Check whether a file is a source file worth downloading
- */
-function isFetchableSource(file: FileNode, entryPoints: ReadonlySet<string>): boolean {
-  if (file.size > MAX_FETCH_FILE_SIZE) {
-    return false;
-  }
-
-  const ext = getFileExtension(file.path);
-  if (!ext || !FETCHABLE_EXTENSIONS.includes(ext)) {
-    return false;
-  }
-
-  if (entryPoints.has(file.path)) {
-    return true;
-  }
-
-  return classifyFileType(file.path) === 'source';
+    .map(file => file.path)
+    .sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b))
+    .slice(0, MAX_ALIAS_CONFIGS);
 }
 
 /**
@@ -482,133 +382,6 @@ function isAliasConfigCandidate(file: FileNode, packageRoots: ReadonlySet<string
   }
 
   return packageRoots.has(dir) && dir.split('/').length <= MAX_TSCONFIG_DEPTH;
-}
-
-/**
- * Score a file for download priority.
- *
- * Mirrors the scoring in prioritizeFiles() (layout.ts): entry points first,
- * then large-but-shallow source files, with examples, fixtures, and legacy code
- * pushed to the back.
- */
-function scoreFetchCandidate(file: FileNode, isEntry: boolean): number {
-  const estimatedLoc = Math.max(Math.floor(file.size / 35), 1);
-  let score = Math.sqrt(estimatedLoc);
-
-  if (isEntry) {
-    score += 1000;
-  }
-
-  const path = file.path.toLowerCase();
-  if (path.includes('example')) score -= 50;
-  if (path.includes('test') || path.includes('spec')) score -= 30;
-  if (path.includes('fixture') || path.includes('mock')) score -= 30;
-  if (path.includes('__')) score -= 20;
-  if (path.includes('legacy') || path.includes('deprecated')) score -= 40;
-
-  const fileName = path.split('/').pop() || '';
-  if (fileName.length < 15) score += 10;
-
-  if (file.path.split('/').length <= 3) score += 15;
-
-  return score;
-}
-
-/**
- * Fetch file contents from the GitHub blob API with bounded concurrency.
- * Failures are logged and skipped: partial results beat a failed analysis.
- */
-async function fetchFileContents(
-  files: FileNode[],
-  owner: string,
-  repo: string,
-  octokit: Octokit
-): Promise<Map<string, string>> {
-  const contents = new Map<string, string>();
-  let cursor = 0;
-  let consecutiveFailures = 0;
-  let exhausted = false;
-
-  async function worker(): Promise<void> {
-    while (cursor < files.length && !exhausted) {
-      const file = files[cursor];
-      cursor += 1;
-
-      try {
-        const response = await octokit.rest.git.getBlob({
-          owner,
-          repo,
-          file_sha: file.sha,
-        });
-
-        // GitHub reports encoding 'none' for blobs it refuses to inline
-        const encoding = (response.data as { encoding?: string }).encoding;
-        if (encoding !== undefined && encoding !== 'base64') {
-          continue;
-        }
-
-        contents.set(file.path, decodeBase64Content(response.data.content));
-        consecutiveFailures = 0;
-      } catch (error) {
-        // Partial results beat no results, so one bad blob never stops the run.
-        // A run of failures is different: it means the runtime is refusing
-        // every further call, which on Cloudflare is the per-request subrequest
-        // budget (50 on the free plan, 1000 on paid). Once that happens the
-        // remaining hundreds of attempts can only add latency and log noise, so
-        // the pool stops and the analysis continues with whatever it has.
-        consecutiveFailures += 1;
-        if (consecutiveFailures >= CONSECUTIVE_FAILURE_LIMIT) {
-          exhausted = true;
-          console.warn(
-            `Stopping blob downloads after ${consecutiveFailures} consecutive failures; ` +
-              `${contents.size} of ${files.length} files were retrieved.`
-          );
-          return;
-        }
-        console.warn(`Failed to fetch content for ${file.path}:`, error);
-      }
-    }
-  }
-
-  const workerCount = Math.min(FETCH_CONCURRENCY, files.length);
-  const workers: Promise<void>[] = [];
-  for (let i = 0; i < workerCount; i += 1) {
-    workers.push(worker());
-  }
-
-  await Promise.all(workers);
-
-  return contents;
-}
-
-/**
- * Decode a GitHub blob payload into a UTF-8 string.
- *
- * Runtime agnostic: Cloudflare Workers have no Buffer, so this uses atob plus
- * TextDecoder. GitHub wraps blob content at 60 characters, so whitespace is
- * stripped before decoding, and multi-byte UTF-8 survives because the decoding
- * happens over raw bytes rather than per character.
- *
- * @param encoded Base64 payload, possibly containing newlines
- * @returns Decoded UTF-8 text, or an empty string when the payload is empty
- */
-export function decodeBase64Content(encoded: string): string {
-  if (!encoded) {
-    return '';
-  }
-
-  const normalized = encoded.replace(/\s+/g, '');
-  if (normalized.length === 0) {
-    return '';
-  }
-
-  const binary = atob(normalized);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return new TextDecoder('utf-8').decode(bytes);
 }
 
 /**
@@ -1000,15 +773,20 @@ function resolveAliasCandidates(
 }
 
 /**
- * Build path alias rules from the tsconfig files that were downloaded.
- * Any tsconfig that fails to parse is skipped: aliases are a bonus signal, and
- * relative import resolution does not depend on them.
+ * Build path alias rules from the selected tsconfig files.
+ * Any tsconfig that is missing or fails to parse is skipped: aliases are a
+ * bonus signal, and relative import resolution does not depend on them.
+ *
+ * @param configPaths Tsconfig paths allowed to define aliases
+ * @param contents File contents from the ingester
+ * @returns Alias rules, most specific scope first
  */
-function buildAliasRules(contents: ReadonlyMap<string, string>): AliasRule[] {
+function buildAliasRules(configPaths: readonly string[], contents: ReadonlyMap<string, string>): AliasRule[] {
   const rules: AliasRule[] = [];
 
-  for (const [path, text] of Array.from(contents.entries())) {
-    if (getBaseName(path) !== 'tsconfig.json') {
+  for (const path of configPaths) {
+    const text = contents.get(path);
+    if (text === undefined) {
       continue;
     }
 

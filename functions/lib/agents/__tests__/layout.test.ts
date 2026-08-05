@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateLayout } from '../layout';
+import { MAX_RENDERED_EDGES, generateLayout, selectRenderableEdges } from '../layout';
 import type { CodeStructure, ParsedFile, Dependency } from '../../types';
 
 /**
@@ -521,6 +521,135 @@ describe('Agent 3: Layout Engine', () => {
         expect(node.metadata.language).toBe('typescript');
       }
     });
+  });
+});
+
+
+/* -------------------------------------------------------------------------- */
+
+describe('choosing which dependency arcs to draw', () => {
+  /**
+   * `targets` gives, for each target file, how many other files import it.
+   * Importers are unique per edge so nothing is accidentally deduplicated.
+   */
+  function graph(targets: readonly number[]): {
+    dependencies: Dependency[];
+    nodeIds: Set<string>;
+  } {
+    const dependencies: Dependency[] = [];
+    const nodeIds = new Set<string>();
+    let importer = 0;
+
+    targets.forEach((count, index) => {
+      const to = `src/target-${index}.ts`;
+      nodeIds.add(to);
+      for (let i = 0; i < count; i += 1) {
+        const from = `src/importer-${importer}.ts`;
+        importer += 1;
+        nodeIds.add(from);
+        dependencies.push({ from, to, type: 'import' });
+      }
+    });
+
+    return { dependencies, nodeIds };
+  }
+
+  function countByTarget(edges: readonly { target: string }[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const edge of edges) {
+      counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  it('keeps everything when the cap does not bite', () => {
+    const { dependencies, nodeIds } = graph([5, 3, 1]);
+    const result = selectRenderableEdges(dependencies, nodeIds);
+
+    expect(result.edges).toHaveLength(9);
+    expect(result.dropped).toBe(0);
+  });
+
+  it('drops only edges whose endpoints are not both on the map', () => {
+    const dependencies: Dependency[] = [
+      { from: 'src/a.ts', to: 'src/b.ts', type: 'import' },
+      { from: 'src/a.ts', to: 'vendor/gone.ts', type: 'import' },
+    ];
+    const result = selectRenderableEdges(dependencies, new Set(['src/a.ts', 'src/b.ts']));
+
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].target).toBe('src/b.ts');
+    expect(result.dropped).toBe(0);
+  });
+
+  it('spends exactly the budget when the cap bites', () => {
+    const { dependencies, nodeIds } = graph(Array.from({ length: 300 }, (_, i) => 300 - i));
+    const result = selectRenderableEdges(dependencies, nodeIds);
+
+    expect(dependencies.length).toBeGreaterThan(MAX_RENDERED_EDGES);
+    expect(result.edges).toHaveLength(MAX_RENDERED_EDGES);
+    expect(result.dropped).toBe(dependencies.length - MAX_RENDERED_EDGES);
+  });
+
+  it('leaves every target with at least one arc rather than emptying most of them', () => {
+    // 300 targets and 45,150 dependencies: seventeen times the budget, and the
+    // shape that used to collapse onto a couple of dozen hubs.
+    const { dependencies, nodeIds } = graph(Array.from({ length: 300 }, (_, i) => 300 - i));
+    const counts = countByTarget(selectRenderableEdges(dependencies, nodeIds).edges);
+
+    expect(counts.size).toBe(300);
+    for (const kept of counts.values()) {
+      expect(kept).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('keeps the busiest target busiest, in proportion', () => {
+    const { dependencies, nodeIds } = graph(Array.from({ length: 300 }, (_, i) => 300 - i));
+    const counts = countByTarget(selectRenderableEdges(dependencies, nodeIds).edges);
+
+    const busiest = counts.get('src/target-0.ts') ?? 0;
+    const middle = counts.get('src/target-150.ts') ?? 0;
+    const quietest = counts.get('src/target-299.ts') ?? 0;
+
+    expect(busiest).toBeGreaterThan(middle);
+    expect(middle).toBeGreaterThanOrEqual(quietest);
+    // Ranked selection gave the busiest target every one of its 300 edges and
+    // left 278 targets with none. Proportional gives it its share of the cap.
+    expect(busiest).toBeLessThan(300);
+  });
+
+  it('falls back to one arc each for the biggest targets when even that will not fit', () => {
+    const { dependencies, nodeIds } = graph(Array.from({ length: 2000 }, () => 2));
+    const result = selectRenderableEdges(dependencies, nodeIds);
+    const counts = countByTarget(result.edges);
+
+    expect(result.edges).toHaveLength(MAX_RENDERED_EDGES);
+    expect(counts.size).toBe(MAX_RENDERED_EDGES);
+    for (const kept of counts.values()) {
+      expect(kept).toBe(1);
+    }
+  });
+
+  it('returns the same arcs for the same repository every time', () => {
+    const { dependencies, nodeIds } = graph(Array.from({ length: 300 }, (_, i) => 300 - i));
+    const first = selectRenderableEdges(dependencies, nodeIds).edges;
+    const second = selectRenderableEdges(dependencies, nodeIds).edges;
+
+    expect(second).toEqual(first);
+  });
+
+  it('prefers a static import over a dynamic one inside the same target', () => {
+    const dependencies: Dependency[] = [];
+    const nodeIds = new Set<string>(['src/hub.ts']);
+    for (let i = 0; i < 4000; i += 1) {
+      const from = `src/importer-${i}.ts`;
+      nodeIds.add(from);
+      dependencies.push({ from, to: 'src/hub.ts', type: i % 2 === 0 ? 'import' : 'dynamic-import' });
+    }
+
+    const result = selectRenderableEdges(dependencies, nodeIds);
+    expect(result.edges).toHaveLength(MAX_RENDERED_EDGES);
+    expect(result.edges.every(edge => edge.strength === 1)).toBe(true);
   });
 });
 

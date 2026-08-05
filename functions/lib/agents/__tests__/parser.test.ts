@@ -1,67 +1,39 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   parseStructure,
   collectPackageRoots,
-  decodeBase64Content,
   isEntryPoint,
   normalizePath,
   resolveImportPath,
   selectEntryPoints,
-  LANGUAGE_MAP,
-  ENTRY_POINT_PATTERNS,
   MAX_ENTRY_POINTS,
 } from '../parser';
 import type { ParserInput } from '../parser';
 import type { FileNode } from '../../types';
-import type { Octokit } from '@octokit/rest';
-
-// Mock Octokit
-const createMockOctokit = () => {
-  const mockGetBlob = vi.fn();
-  return {
-    rest: {
-      git: {
-        getBlob: mockGetBlob,
-      },
-    },
-    _mockGetBlob: mockGetBlob,
-  } as unknown as Octokit & { _mockGetBlob: ReturnType<typeof vi.fn> };
-};
 
 /**
- * Serve blob content per file sha, so only the intended files carry imports
+ * Build parser input.
+ *
+ * The parser no longer fetches anything, so a test says what the tree is and
+ * what text came with it. Files with no entry here are exactly the files whose
+ * content the ingester skipped.
+ *
+ * @param tree Files in the repository
+ * @param contents Decoded text, keyed by path
  */
-function mockBlobContent(
-  octokit: Octokit & { _mockGetBlob: ReturnType<typeof vi.fn> },
-  contentBySha: Record<string, string>
-): void {
-  octokit._mockGetBlob.mockImplementation(async ({ file_sha }: { file_sha: string }) => ({
-    data: {
-      content: Buffer.from(contentBySha[file_sha] ?? '').toString('base64'),
-      encoding: 'base64',
-    },
-  }));
+function parserInput(tree: FileNode[], contents: Record<string, string> = {}): ParserInput {
+  return { tree, contents: new Map(Object.entries(contents)) };
 }
 
 describe('Agent 2: Structure Parser', () => {
-  let mockOctokit: Octokit & { _mockGetBlob: ReturnType<typeof vi.fn> };
-
-  beforeEach(() => {
-    mockOctokit = createMockOctokit();
-  });
-
   describe('Language Detection', () => {
     it('should detect TypeScript files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'abc123' },
-          { path: 'src/component.tsx', type: 'file', size: 2000, sha: 'def456' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 1000 },
+        { path: 'src/component.tsx', type: 'file', size: 2000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].language).toBe('typescript');
@@ -70,16 +42,12 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should detect JavaScript files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.js', type: 'file', size: 1000, sha: 'abc123' },
-          { path: 'src/component.jsx', type: 'file', size: 2000, sha: 'def456' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.js', type: 'file', size: 1000 },
+        { path: 'src/component.jsx', type: 'file', size: 2000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].language).toBe('javascript');
@@ -88,15 +56,9 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should detect Python files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'main.py', type: 'file', size: 1000, sha: 'abc123' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([{ path: 'main.py', type: 'file', size: 1000 }]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].language).toBe('python');
@@ -104,22 +66,18 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should detect multiple languages', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'app.rs', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'main.go', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'App.java', type: 'file', size: 1000, sha: 'a3' },
-          { path: 'main.cpp', type: 'file', size: 1000, sha: 'a4' },
-          { path: 'app.rb', type: 'file', size: 1000, sha: 'a5' },
-          { path: 'index.php', type: 'file', size: 1000, sha: 'a6' },
-          { path: 'App.swift', type: 'file', size: 1000, sha: 'a7' },
-          { path: 'Main.kt', type: 'file', size: 1000, sha: 'a8' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'app.rs', type: 'file', size: 1000 },
+        { path: 'main.go', type: 'file', size: 1000 },
+        { path: 'App.java', type: 'file', size: 1000 },
+        { path: 'main.cpp', type: 'file', size: 1000 },
+        { path: 'app.rb', type: 'file', size: 1000 },
+        { path: 'index.php', type: 'file', size: 1000 },
+        { path: 'App.swift', type: 'file', size: 1000 },
+        { path: 'Main.kt', type: 'file', size: 1000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].language).toBe('rust');
@@ -134,15 +92,9 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should handle unknown extensions', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'file.xyz', type: 'file', size: 1000, sha: 'abc123' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([{ path: 'file.xyz', type: 'file', size: 1000 }]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].language).toBe('unknown');
@@ -152,17 +104,13 @@ describe('Agent 2: Structure Parser', () => {
 
   describe('File Type Classification', () => {
     it('should classify test files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/__tests__/app.test.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/component.spec.ts', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'test/utils.ts', type: 'file', size: 1000, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/__tests__/app.test.ts', type: 'file', size: 1000 },
+        { path: 'src/component.spec.ts', type: 'file', size: 1000 },
+        { path: 'test/utils.ts', type: 'file', size: 1000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].type).toBe('test');
@@ -172,20 +120,16 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should classify config files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'package.json', type: 'file', size: 500, sha: 'a1' },
-          { path: 'tsconfig.json', type: 'file', size: 300, sha: 'a2' },
-          { path: 'vite.config.ts', type: 'file', size: 400, sha: 'a3' },
-          { path: '.eslintrc.js', type: 'file', size: 200, sha: 'a4' },
-          { path: '.env', type: 'file', size: 100, sha: 'a5' },
-          { path: 'Dockerfile', type: 'file', size: 600, sha: 'a6' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'package.json', type: 'file', size: 500 },
+        { path: 'tsconfig.json', type: 'file', size: 300 },
+        { path: 'vite.config.ts', type: 'file', size: 400 },
+        { path: '.eslintrc.js', type: 'file', size: 200 },
+        { path: '.env', type: 'file', size: 100 },
+        { path: 'Dockerfile', type: 'file', size: 600 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         result.data.files.forEach(file => {
@@ -195,18 +139,14 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should classify documentation files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'README.md', type: 'file', size: 2000, sha: 'a1' },
-          { path: 'LICENSE', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'CHANGELOG.md', type: 'file', size: 3000, sha: 'a3' },
-          { path: 'docs/guide.md', type: 'file', size: 5000, sha: 'a4' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'README.md', type: 'file', size: 2000 },
+        { path: 'LICENSE', type: 'file', size: 1000 },
+        { path: 'CHANGELOG.md', type: 'file', size: 3000 },
+        { path: 'docs/guide.md', type: 'file', size: 5000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         result.data.files.forEach(file => {
@@ -216,17 +156,13 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should classify asset files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'public/logo.svg', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'assets/icon.png', type: 'file', size: 2000, sha: 'a2' },
-          { path: 'static/style.css', type: 'file', size: 500, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'public/logo.svg', type: 'file', size: 1000 },
+        { path: 'assets/icon.png', type: 'file', size: 2000 },
+        { path: 'static/style.css', type: 'file', size: 500 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         result.data.files.forEach(file => {
@@ -236,16 +172,12 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should classify source files by default', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils/helper.ts', type: 'file', size: 500, sha: 'a2' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 1000 },
+        { path: 'src/utils/helper.ts', type: 'file', size: 500 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         result.data.files.forEach(file => {
@@ -257,23 +189,24 @@ describe('Agent 2: Structure Parser', () => {
 
   describe('Entry Point Detection', () => {
     it('should detect common entry points', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/main.tsx', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'src/App.tsx', type: 'file', size: 1000, sha: 'a3' },
-          { path: 'app/page.tsx', type: 'file', size: 1000, sha: 'a4' },
-          { path: 'pages/index.jsx', type: 'file', size: 1000, sha: 'a5' },
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/main.tsx', type: 'file', size: 1000 },
+          { path: 'src/App.tsx', type: 'file', size: 1000 },
+          { path: 'app/page.tsx', type: 'file', size: 1000 },
+          { path: 'pages/index.jsx', type: 'file', size: 1000 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        {
+          'src/index.ts': '// entry point',
+          'src/main.tsx': '// entry point',
+          'src/App.tsx': '// entry point',
+          'app/page.tsx': '// entry point',
+          'pages/index.jsx': '// entry point',
+        }
+      );
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from('// entry point').toString('base64') },
-      });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         result.data.files.forEach(file => {
@@ -283,16 +216,12 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should not mark non-entry files as entry points', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/utils/helper.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/components/Button.tsx', type: 'file', size: 1000, sha: 'a2' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/utils/helper.ts', type: 'file', size: 1000 },
+        { path: 'src/components/Button.tsx', type: 'file', size: 1000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         result.data.files.forEach(file => {
@@ -304,16 +233,13 @@ describe('Agent 2: Structure Parser', () => {
 
   describe('LOC Estimation', () => {
     it('should estimate LOC from file size', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 350, sha: 'a1' }, // ~10 lines
-          { path: 'src/large.ts', type: 'file', size: 3500, sha: 'a2' }, // ~100 lines
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      // No content for either file, which is what a size based estimate is for
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 350 }, // ~10 lines
+        { path: 'src/large.ts', type: 'file', size: 3500 }, // ~100 lines
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].loc).toBe(10);
@@ -321,21 +247,12 @@ describe('Agent 2: Structure Parser', () => {
       }
     });
 
-    it('should use actual line count when content is fetched', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
-      const content = 'line1\nline2\nline3\nline4\nline5';
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from(content).toString('base64') },
+    it('should use actual line count when content is available', async () => {
+      const input = parserInput([{ path: 'src/index.ts', type: 'file', size: 1000 }], {
+        'src/index.ts': 'line1\nline2\nline3\nline4\nline5',
       });
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].loc).toBe(5);
@@ -343,15 +260,9 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('should have minimum LOC of 1', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'empty.ts', type: 'file', size: 0, sha: 'a1' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([{ path: 'empty.ts', type: 'file', size: 0 }]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].loc).toBeGreaterThanOrEqual(1);
@@ -365,27 +276,24 @@ describe('Agent 2: Structure Parser', () => {
       // matcher is attacker controlled input. An earlier pattern combined three
       // whitespace matching constructs over the same run, and `import` followed
       // by a long whitespace run with no quote made it re-partition that run:
-      // 68ms at 800 characters, 502ms at 1600, 4.5 seconds at 3200. The fetch
+      // 68ms at 800 characters, 502ms at 1600, 4.5 seconds at 3200. The content
       // budget allows 400 KB per file, so one crafted file could pin a
       // production CPU core.
       //
       // The gap between linear and exponential here is several orders of
       // magnitude, so this budget is generous enough never to flake and still
       // catches any reintroduction.
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
       const hostile = `\nimport${' '.repeat(60_000)}x\nimport { a } from './utils';\n`;
-      mockBlobContent(mockOctokit, { a1: hostile });
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/utils.ts', type: 'file', size: 500 },
+        ],
+        { 'src/index.ts': hostile }
+      );
 
       const started = Date.now();
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       const elapsed = Date.now() - started;
 
       expect(result.success).toBe(true);
@@ -401,18 +309,15 @@ describe('Agent 2: Structure Parser', () => {
       // The static matcher excludes `(` so `import('./x')` keeps its own edge
       // type. Without that exclusion the static pass claims it first and the
       // dependency is recorded as a static import.
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/lazy.ts', type: 'file', size: 500, sha: 'a2' },
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/lazy.ts', type: 'file', size: 500 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        { 'src/index.ts': "const m = await import('./lazy');\n" }
+      );
 
-      mockBlobContent(mockOctokit, { a1: "const m = await import('./lazy');\n" });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         const edge = result.data.dependencies.find(d => d.to === 'src/lazy.ts');
@@ -421,18 +326,15 @@ describe('Agent 2: Structure Parser', () => {
     });
 
     it('does not treat a string assigned by an export as an import', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/utils.ts', type: 'file', size: 500 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        { 'src/index.ts': "export const path = './utils';\n" }
+      );
 
-      mockBlobContent(mockOctokit, { a1: "export const path = './utils';\n" });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.dependencies).toHaveLength(0);
@@ -441,17 +343,6 @@ describe('Agent 2: Structure Parser', () => {
 
     it('should extract ES6 imports', async () => {
       // Import targets must exist in the tree: resolution is evidence based
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
-          { path: 'src/helpers.ts', type: 'file', size: 500, sha: 'a3' },
-          { path: 'components/Button.tsx', type: 'file', size: 500, sha: 'a4' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
       const content = `
 import { foo } from './utils';
 import * as bar from './helpers';
@@ -459,14 +350,22 @@ import baz from '../components/Button';
 import React from 'react';
 `;
 
-      mockBlobContent(mockOctokit, { a1: content });
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/utils.ts', type: 'file', size: 500 },
+          { path: 'src/helpers.ts', type: 'file', size: 500 },
+          { path: 'components/Button.tsx', type: 'file', size: 500 },
+        ],
+        { 'src/index.ts': content }
+      );
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.dependencies.length).toBeGreaterThan(0);
         // Should have relative imports, not external packages
-        const relativeDeps = result.data.dependencies.filter(d => 
+        const relativeDeps = result.data.dependencies.filter(d =>
           d.to.includes('utils') || d.to.includes('helpers') || d.to.includes('Button')
         );
         expect(relativeDeps.length).toBeGreaterThan(0);
@@ -474,24 +373,21 @@ import React from 'react';
     });
 
     it('should extract dynamic imports', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/dynamic.ts', type: 'file', size: 500, sha: 'a2' },
-          { path: 'src/lazy.ts', type: 'file', size: 500, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
       const content = `
 const module = await import('./dynamic');
 import('./lazy').then(m => m.default);
 `;
 
-      mockBlobContent(mockOctokit, { a1: content });
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/dynamic.ts', type: 'file', size: 500 },
+          { path: 'src/lazy.ts', type: 'file', size: 500 },
+        ],
+        { 'src/index.ts': content }
+      );
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         const dynamicDeps = result.data.dependencies.filter(d => d.type === 'dynamic');
@@ -500,24 +396,21 @@ import('./lazy').then(m => m.default);
     });
 
     it('should extract CommonJS requires', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.js', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils.js', type: 'file', size: 500, sha: 'a2' },
-          { path: 'helpers/helper.js', type: 'file', size: 500, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
       const content = `
 const utils = require('./utils');
 const helper = require('../helpers/helper');
 `;
 
-      mockBlobContent(mockOctokit, { a1: content });
+      const input = parserInput(
+        [
+          { path: 'src/index.js', type: 'file', size: 1000 },
+          { path: 'src/utils.js', type: 'file', size: 500 },
+          { path: 'helpers/helper.js', type: 'file', size: 500 },
+        ],
+        { 'src/index.js': content }
+      );
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.dependencies.length).toBeGreaterThan(0);
@@ -525,14 +418,6 @@ const helper = require('../helpers/helper');
     });
 
     it('should filter out external packages', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
       const content = `
 import React from 'react';
 import { useState } from 'react';
@@ -540,15 +425,15 @@ import lodash from 'lodash';
 import './local';
 `;
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from(content).toString('base64') },
+      const input = parserInput([{ path: 'src/index.ts', type: 'file', size: 1000 }], {
+        'src/index.ts': content,
       });
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         // Should only have the local import
-        const externalDeps = result.data.dependencies.filter(d => 
+        const externalDeps = result.data.dependencies.filter(d =>
           d.to.includes('react') || d.to.includes('lodash')
         );
         expect(externalDeps.length).toBe(0);
@@ -556,26 +441,23 @@ import './local';
     });
 
     it('should resolve relative paths correctly', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.tsx', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils/helper.ts', type: 'file', size: 500, sha: 'a2' },
-          { path: 'src/components/Icon.tsx', type: 'file', size: 500, sha: 'a3' },
-          { path: 'config.ts', type: 'file', size: 500, sha: 'a4' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
       const content = `
 import { helper } from './utils/helper';
 import { Icon } from './components/Icon';
 import { config } from '../config';
 `;
 
-      mockBlobContent(mockOctokit, { a1: content });
+      const input = parserInput(
+        [
+          { path: 'src/index.tsx', type: 'file', size: 1000 },
+          { path: 'src/utils/helper.ts', type: 'file', size: 500 },
+          { path: 'src/components/Icon.tsx', type: 'file', size: 500 },
+          { path: 'config.ts', type: 'file', size: 500 },
+        ],
+        { 'src/index.tsx': content }
+      );
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.dependencies.length).toBeGreaterThan(0);
@@ -588,23 +470,20 @@ import { config } from '../config';
     });
 
     it('should build edges across a multi file tree', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'src/lib/util.ts', type: 'file', size: 1000, sha: 'a3' },
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/app.ts', type: 'file', size: 1000 },
+          { path: 'src/lib/util.ts', type: 'file', size: 1000 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        {
+          'src/index.ts': "import { App } from './app';\nimport { util } from './lib/util';\n",
+          'src/app.ts': "import { util } from './lib/util';\n",
+          'src/lib/util.ts': 'export const util = 1;\n',
+        }
+      );
 
-      mockBlobContent(mockOctokit, {
-        a1: "import { App } from './app';\nimport { util } from './lib/util';\n",
-        a2: "import { util } from './lib/util';\n",
-        a3: 'export const util = 1;\n',
-      });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         const edges = result.data.dependencies.map(dep => `${dep.from} -> ${dep.to}`).sort();
@@ -617,20 +496,15 @@ import { config } from '../config';
     });
 
     it('should record resolved imports on the parsed file', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a2' },
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/app.ts', type: 'file', size: 1000 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        { 'src/index.ts': "import { App } from './app';\nimport { App as Again } from './app';\n" }
+      );
 
-      mockBlobContent(mockOctokit, {
-        a1: "import { App } from './app';\nimport { App as Again } from './app';\n",
-      });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         const index = result.data.files.find(file => file.path === 'src/index.ts');
@@ -640,19 +514,15 @@ import { config } from '../config';
     });
 
     it('should resolve tsconfig path aliases', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'tsconfig.json', type: 'file', size: 200, sha: 'tc' },
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/lib/format.ts', type: 'file', size: 500, sha: 'a2' },
+      const input = parserInput(
+        [
+          { path: 'tsconfig.json', type: 'file', size: 200 },
+          { path: 'src/app.ts', type: 'file', size: 1000 },
+          { path: 'src/lib/format.ts', type: 'file', size: 500 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
-      mockBlobContent(mockOctokit, {
-        // Comments and a trailing comma, as real tsconfig files have
-        tc: `{
+        {
+          // Comments and a trailing comma, as real tsconfig files have
+          'tsconfig.json': `{
   // path aliases
   "compilerOptions": {
     "baseUrl": ".",
@@ -661,10 +531,11 @@ import { config } from '../config';
     },
   },
 }`,
-        a1: "import { format } from '@/lib/format';\nimport React from 'react';\n",
-      });
+          'src/app.ts': "import { format } from '@/lib/format';\nimport React from 'react';\n",
+        }
+      );
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.dependencies).toContainEqual({
@@ -678,27 +549,24 @@ import { config } from '../config';
     });
 
     it('should scope path aliases to the package that declares them', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'package.json', type: 'file', size: 100, sha: 'root' },
-          { path: 'apps/www/package.json', type: 'file', size: 100, sha: 'wm' },
-          { path: 'apps/www/tsconfig.json', type: 'file', size: 200, sha: 'wt' },
-          { path: 'apps/www/app/page.tsx', type: 'file', size: 1000, sha: 'wp' },
-          { path: 'apps/www/lib/utils.ts', type: 'file', size: 500, sha: 'wu' },
-          { path: 'packages/cli/src/index.ts', type: 'file', size: 500, sha: 'ci' },
+      const input = parserInput(
+        [
+          { path: 'package.json', type: 'file', size: 100 },
+          { path: 'apps/www/package.json', type: 'file', size: 100 },
+          { path: 'apps/www/tsconfig.json', type: 'file', size: 200 },
+          { path: 'apps/www/app/page.tsx', type: 'file', size: 1000 },
+          { path: 'apps/www/lib/utils.ts', type: 'file', size: 500 },
+          { path: 'packages/cli/src/index.ts', type: 'file', size: 500 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        {
+          'apps/www/tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"] } } }',
+          'apps/www/app/page.tsx': "import { cn } from '@/lib/utils';\n",
+          // Outside apps/www the same specifier must not resolve
+          'packages/cli/src/index.ts': "import { cn } from '@/lib/utils';\n",
+        }
+      );
 
-      mockBlobContent(mockOctokit, {
-        wt: '{ "compilerOptions": { "paths": { "@/*": ["./*"] } } }',
-        wp: "import { cn } from '@/lib/utils';\n",
-        // Outside apps/www the same specifier must not resolve
-        ci: "import { cn } from '@/lib/utils';\n",
-      });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.dependencies).toEqual([
@@ -707,23 +575,44 @@ import { config } from '../config';
       }
     });
 
-    it('should extract Python relative imports', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'pkg/main.py', type: 'file', size: 1000, sha: 'p1' },
-          { path: 'pkg/helpers.py', type: 'file', size: 500, sha: 'p2' },
-          { path: 'pkg/sub/__init__.py', type: 'file', size: 100, sha: 'p3' },
-          { path: 'shared/util.py', type: 'file', size: 500, sha: 'p4' },
+    it('should ignore a tsconfig that does not belong to a package root', async () => {
+      // The ingester retains every tsconfig it meets. One buried in a fixture
+      // directory describes that fixture, not the repository, so it must not
+      // define aliases for the code around it.
+      const input = parserInput(
+        [
+          { path: 'package.json', type: 'file', size: 100 },
+          { path: 'test/fixtures/deep/nested/tsconfig.json', type: 'file', size: 200 },
+          { path: 'test/fixtures/deep/nested/app.ts', type: 'file', size: 500 },
+          { path: 'test/fixtures/deep/nested/lib/utils.ts', type: 'file', size: 500 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        {
+          'test/fixtures/deep/nested/tsconfig.json': '{ "compilerOptions": { "paths": { "~/*": ["./*"] } } }',
+          'test/fixtures/deep/nested/app.ts': "import { cn } from '~/lib/utils';\n",
+        }
+      );
 
-      mockBlobContent(mockOctokit, {
-        p1: 'from .helpers import x\nfrom .sub import y\nfrom ..shared.util import z\nimport os\n',
-      });
+      const result = await parseStructure(input);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.dependencies).toHaveLength(0);
+      }
+    });
 
-      const result = await parseStructure(input, mockOctokit);
+    it('should extract Python relative imports', async () => {
+      const input = parserInput(
+        [
+          { path: 'pkg/main.py', type: 'file', size: 1000 },
+          { path: 'pkg/helpers.py', type: 'file', size: 500 },
+          { path: 'pkg/sub/__init__.py', type: 'file', size: 100 },
+          { path: 'shared/util.py', type: 'file', size: 500 },
+        ],
+        {
+          'pkg/main.py': 'from .helpers import x\nfrom .sub import y\nfrom ..shared.util import z\nimport os\n',
+        }
+      );
+
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         const targets = result.data.dependencies.map(dep => dep.to).sort();
@@ -734,17 +623,13 @@ import { config } from '../config';
 
   describe('Metrics Calculation', () => {
     it('should calculate total files and LOC', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 350, sha: 'a1' },
-          { path: 'src/utils.ts', type: 'file', size: 700, sha: 'a2' },
-          { path: 'src/helper.ts', type: 'file', size: 1050, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 350 },
+        { path: 'src/utils.ts', type: 'file', size: 700 },
+        { path: 'src/helper.ts', type: 'file', size: 1050 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.metrics.totalFiles).toBe(3);
@@ -753,18 +638,14 @@ import { config } from '../config';
     });
 
     it('should calculate language breakdown', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/utils.ts', type: 'file', size: 500, sha: 'a2' },
-          { path: 'main.py', type: 'file', size: 800, sha: 'a3' },
-          { path: 'app.js', type: 'file', size: 600, sha: 'a4' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 1000 },
+        { path: 'src/utils.ts', type: 'file', size: 500 },
+        { path: 'main.py', type: 'file', size: 800 },
+        { path: 'app.js', type: 'file', size: 600 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.metrics.languageBreakdown).toHaveProperty('typescript');
@@ -774,17 +655,13 @@ import { config } from '../config';
     });
 
     it('should calculate directory depth', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/components/Button.tsx', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'src/utils/helpers/format.ts', type: 'file', size: 1000, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 1000 },
+        { path: 'src/components/Button.tsx', type: 'file', size: 1000 },
+        { path: 'src/utils/helpers/format.ts', type: 'file', size: 1000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.metrics.directoryDepth).toBe(4); // src/utils/helpers/format.ts
@@ -792,17 +669,13 @@ import { config } from '../config';
     });
 
     it('should exclude asset files from metrics', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'public/logo.svg', type: 'file', size: 5000, sha: 'a2' },
-          { path: 'assets/icon.png', type: 'file', size: 10000, sha: 'a3' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([
+        { path: 'src/app.ts', type: 'file', size: 1000 },
+        { path: 'public/logo.svg', type: 'file', size: 5000 },
+        { path: 'assets/icon.png', type: 'file', size: 10000 },
+      ]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         // Should only count the source file
@@ -813,13 +686,7 @@ import { config } from '../config';
 
   describe('Edge Cases', () => {
     it('should handle empty tree', async () => {
-      const input: ParserInput = {
-        tree: [],
-        owner: 'test',
-        repo: 'test-repo',
-      };
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(parserInput([]));
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('INVALID_INPUT');
@@ -827,15 +694,9 @@ import { config } from '../config';
     });
 
     it('should handle single file', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'index.ts', type: 'file', size: 100, sha: 'a1' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([{ path: 'index.ts', type: 'file', size: 100 }]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files.length).toBe(1);
@@ -844,15 +705,9 @@ import { config } from '../config';
     });
 
     it('should handle deeply nested files', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'a/b/c/d/e/f/g/h/file.ts', type: 'file', size: 1000, sha: 'a1' },
-        ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+      const input = parserInput([{ path: 'a/b/c/d/e/f/g/h/file.ts', type: 'file', size: 1000 }]);
 
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files[0].path).toBe('a/b/c/d/e/f/g/h/file.ts');
@@ -861,21 +716,16 @@ import { config } from '../config';
     });
 
     it('should filter out directories from file list', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src', type: 'dir', size: 0, sha: 'a1' },
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a2' },
-          { path: 'src/components', type: 'dir', size: 0, sha: 'a3' },
+      const input = parserInput(
+        [
+          { path: 'src', type: 'dir', size: 0 },
+          { path: 'src/app.ts', type: 'file', size: 1000 },
+          { path: 'src/components', type: 'dir', size: 0 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        { 'src/app.ts': '// content' }
+      );
 
-      mockOctokit._mockGetBlob.mockResolvedValue({
-        data: { content: Buffer.from('// content').toString('base64') },
-      });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.files.length).toBe(1);
@@ -883,55 +733,45 @@ import { config } from '../config';
       }
     });
 
-    it('should continue on blob fetch failure', async () => {
-      const input: ParserInput = {
-        tree: [
-          { path: 'src/index.ts', type: 'file', size: 1000, sha: 'a1' },
-          { path: 'src/app.ts', type: 'file', size: 1000, sha: 'a2' },
+    it('should keep files whose content was never retained', async () => {
+      // The ingester skips content past its budgets. Those files still belong
+      // on the map: they keep an estimated line count and contribute no edges,
+      // which beats dropping them.
+      const input = parserInput(
+        [
+          { path: 'src/index.ts', type: 'file', size: 1000 },
+          { path: 'src/app.ts', type: 'file', size: 1000 },
         ],
-        owner: 'test',
-        repo: 'test-repo',
-      };
+        { 'src/app.ts': "import './index';\n" }
+      );
 
-      // Mock first call to fail, second to succeed
-      mockOctokit._mockGetBlob
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({
-          data: { content: Buffer.from('content').toString('base64') },
-        });
-
-      const result = await parseStructure(input, mockOctokit);
+      const result = await parseStructure(input);
       expect(result.success).toBe(true);
       if (result.success) {
-        // Should still have both files, even if one fetch failed
+        // Both files are present, even though only one carried content
         expect(result.data.files.length).toBe(2);
+        const index = result.data.files.find(file => file.path === 'src/index.ts');
+        expect(index?.loc).toBe(28); // estimated from size, not counted
+        expect(result.data.dependencies).toEqual([
+          { from: 'src/app.ts', to: 'src/index.ts', type: 'import' },
+        ]);
       }
     });
-  });
-});
 
-describe('Blob Content Decoding', () => {
-  it('should decode ASCII content', () => {
-    expect(decodeBase64Content(Buffer.from('const a = 1;').toString('base64'))).toBe('const a = 1;');
-  });
+    it('should tolerate contents for a path that is not in the tree', async () => {
+      const input = parserInput([{ path: 'src/index.ts', type: 'file', size: 100 }], {
+        'src/index.ts': "import './gone';\n",
+        'src/gone.ts': 'export const gone = 1;\n',
+      });
 
-  it('should decode multi-byte UTF-8 content', () => {
-    const source = '// 도시 지도 렌더러 ✨\nconst café = "naïve";\n';
-    const encoded = Buffer.from(source, 'utf-8').toString('base64');
-    expect(decodeBase64Content(encoded)).toBe(source);
-  });
-
-  it('should ignore the line breaks GitHub embeds in blob content', () => {
-    const source = 'import { a } from "./a";\nimport { b } from "./b";\n';
-    const encoded = Buffer.from(source, 'utf-8').toString('base64');
-    // GitHub wraps blob payloads at 60 characters
-    const wrapped = (encoded.match(/.{1,60}/g) ?? []).join('\n') + '\n';
-    expect(decodeBase64Content(wrapped)).toBe(source);
-  });
-
-  it('should return an empty string for empty payloads', () => {
-    expect(decodeBase64Content('')).toBe('');
-    expect(decodeBase64Content('\n')).toBe('');
+      const result = await parseStructure(input);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.files.length).toBe(1);
+        // Resolution is evidence based: the tree decides, not the contents map
+        expect(result.data.dependencies).toHaveLength(0);
+      }
+    });
   });
 });
 
@@ -1034,11 +874,11 @@ describe('Entry Point Selection', () => {
   it('should cap the number of entry points a repo can claim', () => {
     const files: FileNode[] = [];
     for (let i = 0; i < MAX_ENTRY_POINTS + 15; i += 1) {
-      files.push({ path: `packages/pkg${i}/package.json`, type: 'file', size: 100, sha: `m${i}` });
-      files.push({ path: `packages/pkg${i}/src/index.ts`, type: 'file', size: 100, sha: `s${i}` });
+      files.push({ path: `packages/pkg${i}/package.json`, type: 'file', size: 100 });
+      files.push({ path: `packages/pkg${i}/src/index.ts`, type: 'file', size: 100 });
     }
-    files.push({ path: 'package.json', type: 'file', size: 100, sha: 'root-manifest' });
-    files.push({ path: 'src/index.ts', type: 'file', size: 100, sha: 'root-index' });
+    files.push({ path: 'package.json', type: 'file', size: 100 });
+    files.push({ path: 'src/index.ts', type: 'file', size: 100 });
 
     const roots = collectPackageRoots(new Set(files.map(file => file.path)));
     const entryPoints = selectEntryPoints(files, roots);

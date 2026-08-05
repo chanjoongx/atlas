@@ -1,6 +1,11 @@
+import { useEffect, useRef } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Crosshair, ExternalLink, X } from 'lucide-react';
 import { SIGNAL_LABEL, districtColor, signalColor, type ThemeName } from '../lib/palette';
+import { WIDE, useMediaQuery } from '../lib/media';
 import type { Scene, SceneNode } from '../lib/iso';
+
+const FOCUSABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 interface InspectorProps {
   node: SceneNode;
@@ -26,10 +31,58 @@ export function Inspector({ node, scene, theme, repo, onSelect, onLocate, onClos
   const importedBy = related.filter((edge) => edge.target === node.id).map((edge) => edge.source);
   const dir = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '';
 
+  // Below lg this is not a column beside the map, it is a sheet on top of it.
+  const modal = !useMediaQuery(WIDE);
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  /*
+   * Focus, but only while this is a takeover.
+   *
+   * As a column it must not steal focus, because opening it is a side effect
+   * of clicking the map and yanking the caret into a side panel every time
+   * would be hostile. As a sheet it must, because otherwise Tab walks the six
+   * map buttons underneath it first, every one of them off screen, before it
+   * ever reaches the panel: measured, and activeElement was BODY both on open
+   * and after closing, so a keyboard visitor restarted from the top of the
+   * document each time.
+   */
+  useEffect(() => {
+    if (!modal) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const previous = document.activeElement;
+    closeRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const stops = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (stops.length === 0) return;
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      const active = document.activeElement;
+      const outside = !panel.contains(active);
+      if (event.shiftKey ? active === first || outside : active === last || outside) {
+        (event.shiftKey ? last : first).focus();
+        event.preventDefault();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (previous instanceof HTMLElement && document.contains(previous)) previous.focus();
+    };
+  }, [modal]);
+
   return (
     <aside
+      ref={panelRef}
       className="border-line bg-surface animate-fade-in flex h-full w-full flex-col border-l"
       aria-label="File details"
+      role={modal ? 'dialog' : undefined}
+      aria-modal={modal || undefined}
     >
       <header className="border-subtle flex items-start gap-2 border-b px-4 py-3">
         <span
@@ -41,13 +94,16 @@ export function Inspector({ node, scene, theme, repo, onSelect, onLocate, onClos
           <h2 className="mono text-primary truncate text-sm font-medium">{node.label}</h2>
           {dir && <p className="mono text-tertiary truncate text-2xs">{dir}/</p>}
         </div>
+        {/* 28px was the smallest target in the app, and on a phone it is the
+            only way out of a full screen panel. There is no Escape key there. */}
         <button
+          ref={closeRef}
           type="button"
           onClick={onClose}
-          className="btn btn-ghost btn-icon -mr-1.5 -mt-1 size-7"
+          className="btn btn-ghost btn-icon -mr-1.5 -mt-1 size-9 lg:size-7"
           aria-label="Close details"
         >
-          <X size={15} aria-hidden />
+          <X size={16} aria-hidden />
         </button>
       </header>
 
@@ -105,7 +161,7 @@ export function Inspector({ node, scene, theme, repo, onSelect, onLocate, onClos
         />
       </div>
 
-      <footer className="border-subtle flex gap-2 border-t px-4 py-3">
+      <footer className="border-subtle pad-safe-bottom flex gap-2 border-t px-4 pt-3">
         <button type="button" onClick={() => onLocate(node.id)} className="btn btn-secondary flex-1">
           <Crosshair size={14} aria-hidden />
           Locate

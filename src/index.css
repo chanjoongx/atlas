@@ -128,16 +128,16 @@
   }
 
   .btn-primary {
-    background-color: var(--accent);
+    background-color: var(--accent-solid);
     color: var(--accent-contrast);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background-color: var(--accent-hover);
+    background-color: var(--accent-solid-hover);
   }
 
   .btn-primary:active:not(:disabled) {
-    background-color: var(--accent-active);
+    background-color: var(--accent-solid-active);
   }
 
   .btn-secondary {
@@ -229,6 +229,65 @@
 }
 
 @layer utilities {
+  /* Safe areas ------------------------------------------------------------
+   *
+   * index.html asks for `viewport-fit=cover` and the manifest asks for a
+   * standalone display, which together mean the page is laid out *under* the
+   * notch, the rounded corners and the home indicator rather than inside a
+   * letterbox. Nothing honoured that, so in landscape every map control and
+   * the back button sat inside the notch band, and in standalone portrait the
+   * header sat under the status bar and the stats bar under the home
+   * indicator.
+   *
+   * Every rule is `max(designed padding, inset)`, so a device with no insets
+   * is laid out exactly as before and only a device that needs the room pays
+   * for it.
+   */
+  /* `--pad-x` is the padding the design wants; the inset only ever wins when it
+     is larger. Set it with Tailwind's arbitrary property syntax, e.g.
+     `[--pad-x:1.5rem]`, wherever the default 1rem is not the designed value. */
+  .pad-safe-x {
+    padding-left: max(var(--pad-x, 1rem), env(safe-area-inset-left));
+    padding-right: max(var(--pad-x, 1rem), env(safe-area-inset-right));
+  }
+
+  .pad-safe-top {
+    padding-top: max(0.625rem, env(safe-area-inset-top));
+  }
+
+  .pad-safe-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  .inset-safe-right {
+    right: max(0.75rem, env(safe-area-inset-right));
+  }
+
+  .inset-safe-left {
+    left: max(1rem, env(safe-area-inset-left));
+  }
+
+  /* Pointer-appropriate copy ----------------------------------------------
+   * "scroll zoom" and "[ ] rotate" are instructions a phone cannot follow,
+   * and the hint strip is the only guidance the map ever shows. */
+  .hint-fine {
+    display: flex;
+  }
+
+  .hint-coarse {
+    display: none;
+  }
+
+  @media (pointer: coarse) {
+    .hint-fine {
+      display: none;
+    }
+
+    .hint-coarse {
+      display: flex;
+    }
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
     width: 7px;
     height: 7px;

@@ -396,9 +396,19 @@ function calculateDistrictAnchors(
  * Select the dependency edges that can be drawn for a set of nodes.
  *
  * Both endpoints have to be rendered nodes, and the result is capped at
- * MAX_RENDERED_EDGES. When the cap bites, static imports are kept ahead of
- * dynamic ones and edges pointing at the most imported targets are kept ahead
- * of the rest, so the hub structure of the repo survives.
+ * MAX_RENDERED_EDGES. When the cap bites, the budget is split across targets in
+ * proportion to how often each one is imported, and inside a target static
+ * imports are kept ahead of dynamic ones.
+ *
+ * Proportional rather than ranked, and the difference is the whole point.
+ * Ranking every edge by its target's in-degree sounds like it preserves hub
+ * structure, and it destroys it: on drizzle-orm the 1,500 slots all went to the
+ * 22 busiest targets out of 392, because a hub has hundreds of edges and they
+ * all sort above everything else. The picture became two dozen files with
+ * enormous fans and 370 files with no arcs at all, which is not what the
+ * repository looks like. Proportional keeps the shape of the distribution: the
+ * busiest target still keeps the most arcs, by the same ratio it had, and a
+ * file imported once still keeps its one arc.
  *
  * @param dependencies Dependencies from Agent 2
  * @param nodeIds Ids of the nodes that will be rendered
@@ -416,30 +426,108 @@ export function selectRenderableEdges(
     return { edges: eligible.map(toLayoutEdge), dropped: 0 };
   }
 
-  // In-degree over the eligible edges: how often each target is imported
-  const inDegree = new Map<string, number>();
+  // Group by target. Inside a group, strongest first, then by importer name so
+  // the same repository always yields the same map.
+  const byTarget = new Map<string, Dependency[]>();
   for (const dep of eligible) {
-    inDegree.set(dep.to, (inDegree.get(dep.to) ?? 0) + 1);
+    const group = byTarget.get(dep.to);
+    if (group) {
+      group.push(dep);
+    } else {
+      byTarget.set(dep.to, [dep]);
+    }
   }
 
-  const ranked = [...eligible].sort((a, b) => {
-    const strengthDiff = edgeStrength(b) - edgeStrength(a);
-    if (strengthDiff !== 0) {
-      return strengthDiff;
-    }
+  for (const group of byTarget.values()) {
+    group.sort(
+      (a, b) => edgeStrength(b) - edgeStrength(a) || a.from.localeCompare(b.from)
+    );
+  }
 
-    const degreeDiff = (inDegree.get(b.to) ?? 0) - (inDegree.get(a.to) ?? 0);
-    if (degreeDiff !== 0) {
-      return degreeDiff;
-    }
+  // Most imported target first, so that when the budget is too small to give
+  // every target even one arc, the ones that carry the structure are kept.
+  const targets = [...byTarget.entries()]
+    .map(([id, group]) => ({ id, group }))
+    .sort((a, b) => b.group.length - a.group.length || a.id.localeCompare(b.id));
 
-    return a.from.localeCompare(b.from) || a.to.localeCompare(b.to);
+  const quotas = apportion(
+    targets.map(target => target.group.length),
+    MAX_RENDERED_EDGES
+  );
+
+  const kept: Dependency[] = [];
+  targets.forEach((target, index) => {
+    for (let i = 0; i < quotas[index]; i += 1) {
+      kept.push(target.group[i]);
+    }
   });
 
   return {
-    edges: ranked.slice(0, MAX_RENDERED_EDGES).map(toLayoutEdge),
-    dropped: eligible.length - MAX_RENDERED_EDGES
+    edges: kept.map(toLayoutEdge),
+    dropped: eligible.length - kept.length
   };
+}
+
+/**
+ * Split a budget across groups in proportion to their size.
+ *
+ * Every group that can be represented at all is given at least one slot, then
+ * the rounding error is settled one slot at a time: a slot goes to whichever
+ * group sits furthest below its exact share, and is taken back from whichever
+ * sits furthest above it. That is the largest remainder method, written as a
+ * loop because the floor-with-a-minimum-of-one start can land on either side of
+ * the budget and both directions have to be able to close the gap.
+ *
+ * @param sizes How many items each group has, largest first
+ * @param budget Total number of items that may be kept
+ * @returns How many items to keep from each group, index for index
+ */
+function apportion(sizes: readonly number[], budget: number): number[] {
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+
+  if (total <= budget) {
+    return [...sizes];
+  }
+
+  // More groups than slots: proportionality has nothing left to say, so spend
+  // the budget on the largest groups at one apiece.
+  if (sizes.length >= budget) {
+    return sizes.map((_, index) => (index < budget ? 1 : 0));
+  }
+
+  const exact = sizes.map(size => (size * budget) / total);
+  const quotas = exact.map((share, index) =>
+    Math.min(sizes[index], Math.max(1, Math.floor(share)))
+  );
+
+  let assigned = quotas.reduce((sum, quota) => sum + quota, 0);
+
+  while (assigned !== budget) {
+    const step = assigned < budget ? 1 : -1;
+    let pick = -1;
+    let best = -Infinity;
+
+    for (let index = 0; index < quotas.length; index += 1) {
+      const room = step > 0 ? quotas[index] < sizes[index] : quotas[index] > 1;
+      if (!room) {
+        continue;
+      }
+      const score = step > 0 ? exact[index] - quotas[index] : quotas[index] - exact[index];
+      if (score > best) {
+        best = score;
+        pick = index;
+      }
+    }
+
+    if (pick === -1) {
+      break;
+    }
+
+    quotas[pick] += step;
+    assigned += step;
+  }
+
+  return quotas;
 }
 
 /**

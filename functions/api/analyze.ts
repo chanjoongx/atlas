@@ -9,12 +9,11 @@
  * - Agent 4: Annotator
  */
 
-import { createGitHubClientFromEnv, type Env } from '../lib/github-client';
 import { ingestRepo } from '../lib/agents/ingester';
 import { parseStructure, type ParserInput } from '../lib/agents/parser';
 import { generateLayout, selectRenderableEdges, type LayoutConfig } from '../lib/agents/layout';
 import { annotateLayout } from '../lib/agents/annotator';
-import type { AnnotatedLayout, CodeStructure, IngesterInput, LayoutMeta, RepoManifest } from '../lib/types';
+import type { AnnotatedLayout, CodeStructure, Env, IngesterInput, LayoutMeta, RepoManifest } from '../lib/types';
 
 interface AnalyzeRequestBody {
   owner: string;
@@ -124,17 +123,14 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       );
     }
 
-    // Create GitHub client
-    const octokit = createGitHubClientFromEnv(context.env);
-
-    // Agent 1: Repo Ingester
+    // Agent 1: Repo Ingester. No credential: the archive is public.
     const ingesterInput: IngesterInput = {
       owner: body.owner,
       repo: body.repo,
       branch: body.branch,
     };
 
-    const ingesterResult = await ingestRepo(ingesterInput, octokit);
+    const ingesterResult = await ingestRepo(ingesterInput);
 
     if (!ingesterResult.success) {
       // Map agent error codes to HTTP status codes
@@ -148,14 +144,13 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       );
     }
 
-    // Agent 2: Structure Parser
+    // Agent 2: Structure Parser. Fetches nothing; the ingester already read it.
     const parserInput: ParserInput = {
       tree: ingesterResult.data.tree,
-      owner: body.owner,
-      repo: body.repo,
+      contents: ingesterResult.data.contents,
     };
 
-    const parserResult = await parseStructure(parserInput, octokit);
+    const parserResult = await parseStructure(parserInput);
 
     if (!parserResult.success) {
       const statusCode = getStatusCodeForError(parserResult.error.code);
@@ -272,9 +267,8 @@ function buildLayoutMeta(
     owner: manifest.metadata.owner,
     repo: manifest.metadata.repo,
     branch: manifest.metadata.branch,
-    description: manifest.metadata.description,
-    stars: manifest.metadata.stars,
-    lastCommitDate: manifest.metadata.lastCommitDate,
+    commitSha: manifest.metadata.commitSha,
+    truncated: manifest.metadata.truncated === true,
     totalFiles: structure.files.length,
     renderedNodes: layout.nodes.length,
     totalLOC: structure.metrics.totalLOC,

@@ -31,7 +31,7 @@
  */
 
 import type { AnnotatedLayout, FileType, LayoutNode } from '../../types';
-import type { SignalKind } from '../palette';
+import { SIGNAL_LABEL, SIGNAL_ORDER, type SignalKind } from '../palette';
 import { boundsOf, depthOf, project, rotate, rotateExtent, type Azimuth, type Bounds } from './projection';
 
 /* -------------------------------------------------------------------------- */
@@ -520,4 +520,60 @@ function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const list = map.get(key);
   if (list) list.push(value);
   else map.set(key, [value]);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Description                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The map, in a sentence a screen reader can actually say.
+ *
+ * Three thousand SVG elements carrying no roles are three thousand pieces of
+ * silence, so a visitor who cannot see the city was getting one aria-label and
+ * no data at all. The answer is not an ARIA tree of five hundred buildings,
+ * which would be unusable in a different way: it is the handful of facts a
+ * sighted visitor takes from the shape in the first second, which are how big
+ * it is, how it divides, and what stands out.
+ *
+ * Plain sentences rather than a list, because this is read aloud.
+ */
+export function describeScene(scene: Scene): string {
+  const { stats, districts, nodes } = scene;
+  if (nodes.length === 0) return 'The map is empty.';
+
+  const parts: string[] = [];
+
+  parts.push(
+    `${stats.fileCount.toLocaleString()} files in ${stats.districtCount} ${
+      stats.districtCount === 1 ? 'district' : 'districts'
+    }, ${stats.totalLoc.toLocaleString()} lines in total.`,
+  );
+
+  const largest = [...districts].sort((a, b) => b.fileCount - a.fileCount).slice(0, 4);
+  if (largest.length > 0) {
+    parts.push(
+      `Largest ${largest.length === 1 ? 'district' : 'districts'}: ${largest
+        .map((district) => `${district.name}, ${district.fileCount} files`)
+        .join('; ')}.`,
+    );
+  }
+
+  const landmarks = SIGNAL_ORDER.filter((kind) => stats.landmarks[kind] > 0).map((kind) => {
+    const count = stats.landmarks[kind];
+    const noun = SIGNAL_LABEL[kind].toLowerCase();
+    return `${count} ${count === 1 ? noun : `${noun}s`}`;
+  });
+  if (landmarks.length > 0) parts.push(`Landmarks: ${landmarks.join(', ')}.`);
+
+  const tallest = [...nodes].sort((a, b) => b.loc - a.loc).slice(0, 5);
+  parts.push(
+    `Largest files: ${tallest
+      .map((node) => `${node.path}, ${node.loc.toLocaleString()} lines`)
+      .join('; ')}.`,
+  );
+
+  parts.push(`Median file is ${stats.medianLoc.toLocaleString()} lines.`);
+
+  return parts.join(' ');
 }

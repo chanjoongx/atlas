@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
 import type { AnnotatedLayout } from './types';
 import { fetchAnnotatedLayout } from './lib/api-client';
 import { buildScene, type Azimuth, type IsoRenderer } from './lib/iso';
+import { WIDE, matchesMedia } from './lib/media';
 import { formatRepoRef, parseRepoRef, type RepoRef } from './lib/repo-ref';
 import { SITE_ORIGIN } from './lib/site';
 import { useTheme } from './lib/theme';
@@ -41,6 +42,11 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusedDistrict, setFocusedDistrict] = useState<string | null>(null);
   const [renderer, setRenderer] = useState<IsoRenderer | null>(null);
+  // Separate from the selection, because below lg the panel covers the map and
+  // the two need to be able to disagree: the building stays outlined while the
+  // panel gets out of the way.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
 
   // Guards against a slow request landing after the visitor moved on.
   const requestId = useRef(0);
@@ -52,6 +58,8 @@ export default function App() {
     setError(null);
     setLayout(null);
     setSelectedId(null);
+    setInspectorOpen(false);
+    setKeyOpen(false);
     setFocusedDistrict(null);
 
     try {
@@ -73,6 +81,8 @@ export default function App() {
     setError(null);
     setLoading(false);
     setSelectedId(null);
+    setInspectorOpen(false);
+    setKeyOpen(false);
     setFocusedDistrict(null);
     setAzimuth(0);
   }, []);
@@ -145,10 +155,24 @@ export default function App() {
     [],
   );
 
+  const select = useCallback((nodeId: string | null) => {
+    setSelectedId(nodeId);
+    setInspectorOpen(nodeId !== null);
+  }, []);
+
+  /**
+   * Fly the camera to a file.
+   *
+   * Below lg the panel is a full width sheet over the map, so flying the camera
+   * and leaving the sheet up moved the view behind an opaque surface: measured
+   * as a real camera change, zoom 1 to 2.2, that nobody could see. The building
+   * stays selected and outlined; only the sheet gets out of the way.
+   */
   const locate = useCallback(
     (nodeId: string) => {
       setSelectedId(nodeId);
       renderer?.flyTo(nodeId);
+      if (!matchesMedia(WIDE)) setInspectorOpen(false);
     },
     [renderer],
   );
@@ -157,7 +181,7 @@ export default function App() {
 
   return (
     <div className={mapped ? 'flex h-dvh flex-col overflow-hidden' : 'flex min-h-dvh flex-col'}>
-      <header className="border-line bg-surface flex shrink-0 items-center gap-3 border-b px-4 py-2.5">
+      <header className="border-line bg-surface pad-safe-x pad-safe-top flex shrink-0 items-center gap-3 border-b pb-2.5">
         {mapped || loading || failed ? (
           <>
             <button
@@ -221,7 +245,12 @@ export default function App() {
       )}
 
       {mapped && scene && (
-        <main className="flex min-h-0 flex-1">
+        // `relative` is load bearing. Without it the inspector's `inset-0`
+        // resolved against the viewport rather than this region, so on every
+        // width below lg the panel covered the header too: back, export, GitHub
+        // and the theme toggle all went behind an opaque surface with no way
+        // back except a 28px close button.
+        <main className="relative flex min-h-0 flex-1">
           <aside
             className="border-line bg-surface hidden w-64 shrink-0 border-r lg:block"
             aria-label="Map key"
@@ -244,26 +273,50 @@ export default function App() {
               focusedDistrict={focusedDistrict}
               onAzimuth={setAzimuth}
               onSettings={patchSettings}
-              onSelect={setSelectedId}
+              onSelect={select}
               onReady={setRenderer}
+              onOpenKey={() => setKeyOpen(true)}
             />
             <StatsBar stats={scene.stats} theme={theme} />
           </div>
 
-          {selectedNode && (
-            <div className="bg-scrim absolute inset-0 z-30 flex justify-end lg:static lg:z-auto lg:w-80 lg:shrink-0 lg:bg-transparent">
-              <div className="bg-surface h-full w-full max-w-sm lg:max-w-none">
+          {selectedNode && inspectorOpen && (
+            <div className="absolute inset-0 z-30 flex justify-end lg:static lg:z-auto lg:w-80 lg:shrink-0">
+              {/* Tapping beside the panel used to do nothing at all: it neither
+                  closed the panel nor reached the map, which on an iPad in
+                  portrait was 192px of dead screen and in landscape 460px.
+                  It clears the selection rather than only hiding the panel,
+                  because a building that stays selected invisibly makes the
+                  next tap on it read as dead: the map would toggle it off and
+                  nothing at all would happen on screen. */}
+              <div
+                aria-hidden
+                onClick={() => select(null)}
+                className="bg-scrim absolute inset-0 lg:hidden"
+              />
+              <div className="bg-surface relative h-full w-full max-w-sm lg:max-w-none">
                 <Inspector
                   node={selectedNode}
                   scene={scene}
                   theme={theme}
                   repo={ref}
-                  onSelect={setSelectedId}
+                  onSelect={select}
                   onLocate={locate}
-                  onClose={() => setSelectedId(null)}
+                  onClose={() => select(null)}
                 />
               </div>
             </div>
+          )}
+
+          {keyOpen && (
+            <MapKeySheet onClose={() => setKeyOpen(false)}>
+              <Legend
+                scene={scene}
+                theme={theme}
+                focused={focusedDistrict}
+                onFocus={setFocusedDistrict}
+              />
+            </MapKeySheet>
           )}
         </main>
       )}
@@ -271,9 +324,71 @@ export default function App() {
   );
 }
 
+/**
+ * The map key, for every width where there is no room for a column.
+ *
+ * Tailwind's `lg` is 1024px, so `hidden lg:block` on the key column is not a
+ * phone rule, it is a "narrower than a laptop" rule: it also fires on an iPad
+ * in portrait and on any phone in landscape. What it removed was the only
+ * explanation of what height, colour and the orange roofs mean, which are
+ * precisely the two things the landing page promises. District names survive
+ * because they are painted into the map itself; nothing else does.
+ *
+ * `display: none` also takes the column out of the accessibility tree, so this
+ * was not only a small screen problem.
+ */
+function MapKeySheet({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    closeRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // The map binds Escape on the window to clear its selection. Stopping
+      // here keeps one key press from doing two things.
+      event.stopPropagation();
+      onClose();
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (previous instanceof HTMLElement && document.contains(previous)) previous.focus();
+    };
+  }, [onClose]);
+
+  return (
+    <div className="absolute inset-0 z-40 flex items-end justify-center lg:hidden">
+      <div aria-hidden onClick={onClose} className="bg-scrim absolute inset-0" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Map key"
+        className="bg-surface border-line animate-fade-up relative flex h-3/4 w-full max-w-lg flex-col rounded-t-xl border-t"
+      >
+        <div className="border-subtle flex shrink-0 items-center justify-between border-b px-4 py-2.5">
+          <p className="eyebrow">Map key</p>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="btn btn-ghost btn-icon -mr-1.5 size-9"
+            aria-label="Close map key"
+          >
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+        <div className="pad-safe-bottom min-h-0 flex-1 overflow-hidden">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function SiteFooter() {
   return (
-    <footer className="border-line border-t px-6 py-7">
+    <footer className="border-line pad-safe-x border-t py-7 [--pad-x:1.5rem]">
       <div className="text-tertiary mx-auto flex max-w-5xl flex-col gap-3 text-2xs sm:flex-row sm:items-center sm:justify-between">
         <p>
           Built with IBM Bob in 48 hours, May 2026. Open source under the MIT licence.

@@ -1,5 +1,6 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
+  KeyRound,
   Maximize2,
   Minus,
   Plus,
@@ -27,6 +28,7 @@ interface MapControlsProps {
   onReset: () => void;
   onRotate: (direction: -1 | 1) => void;
   onSettings: (patch: Partial<ViewSettings>) => void;
+  onOpenKey: () => void;
 }
 
 const COMPASS = ['N', 'E', 'S', 'W'] as const;
@@ -40,13 +42,33 @@ export function MapControls({
   onReset,
   onRotate,
   onSettings,
+  onOpenKey,
 }: MapControlsProps) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const sliderId = useId();
+  const coarse = useCoarsePointer();
+
+  /*
+   * Height exaggeration, held locally while a finger is on it.
+   *
+   * Every step of this slider rebuilds all three thousand SVG elements, which
+   * a desktop absorbs and a mid range phone does not: measured at 4x CPU
+   * throttling one step cost a full second of style recalculation, and dragging
+   * it dropped the page to 0.4 frames per second. The thumb still tracks the
+   * finger, because that is local state; only the redraw waits for release.
+   */
+  const [draft, setDraft] = useState<number | null>(null);
+  const value = draft ?? settings.exaggeration;
+
+  const commit = () => {
+    if (draft === null) return;
+    onSettings({ exaggeration: draft });
+    setDraft(null);
+  };
 
   return (
-    <div className="absolute right-3 top-3 z-20 flex items-start gap-2">
+    <div className="inset-safe-right absolute top-3 z-20 flex items-start gap-2">
       {open && (
         <div
           id={panelId}
@@ -57,9 +79,7 @@ export function MapControls({
 
           <label htmlFor={sliderId} className="text-secondary flex items-baseline justify-between text-xs">
             Height exaggeration
-            <span className="tabular text-tertiary mono text-2xs">
-              {settings.exaggeration.toFixed(2)}x
-            </span>
+            <span className="tabular text-tertiary mono text-2xs">{value.toFixed(2)}x</span>
           </label>
           <input
             id={sliderId}
@@ -67,8 +87,15 @@ export function MapControls({
             min={0.4}
             max={2}
             step={0.05}
-            value={settings.exaggeration}
-            onChange={(event) => onSettings({ exaggeration: Number(event.target.value) })}
+            value={value}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              if (coarse) setDraft(next);
+              else onSettings({ exaggeration: next });
+            }}
+            onPointerUp={commit}
+            onKeyUp={commit}
+            onBlur={commit}
             className="accent-accent mt-1.5 w-full"
           />
 
@@ -130,15 +157,50 @@ export function MapControls({
 
         <IconButton
           label="View options"
-          onClick={() => setOpen((value) => !value)}
+          onClick={() => setOpen((current) => !current)}
           pressed={open}
           controls={panelId}
         >
           <Settings2 size={15} aria-hidden />
         </IconButton>
+
+        {/*
+          Below lg the key column is `display: none`, which took the whole
+          explanation of the encoding with it: height, colour, the orange roofs
+          and the beacons all went unexplained on every phone, every tablet in
+          portrait and every phone in landscape. Same component, opened as a
+          sheet.
+        */}
+        <div className="lg:hidden">
+          <IconButton label="Map key" onClick={onOpenKey}>
+            <KeyRound size={15} aria-hidden />
+          </IconButton>
+        </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Whether the primary pointer is a finger.
+ *
+ * Read live rather than once, because a tablet with a keyboard case attached
+ * changes answer without reloading the page.
+ */
+function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(
+    () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches,
+  );
+
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const query = matchMedia('(pointer: coarse)');
+    const onChange = () => setCoarse(query.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  return coarse;
 }
 
 /* -------------------------------------------------------------------------- */

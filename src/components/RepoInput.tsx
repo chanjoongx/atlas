@@ -113,7 +113,7 @@ export function DemoRepoCards({ onAnalyze, loading }: RepoInputProps) {
     <div>
       <p className="eyebrow flex items-center gap-1.5">
         <Zap size={11} aria-hidden />
-        Prebuilt, opens instantly
+        Prebuilt, no analysis step
       </p>
       <ul className="mt-2.5 grid gap-2 sm:grid-cols-3">
         {DEMO_REPOS.map((demo) => (

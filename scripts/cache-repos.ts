@@ -2,15 +2,15 @@
  * Pre-render the demo repositories into public/cache/.
  *
  * Runs the full agent pipeline in this process, so no wrangler dev server is
- * needed. The GitHub token is read from .dev.vars (gitignored) or from the
- * GITHUB_TOKEN environment variable, and is never printed.
+ * needed. Nothing here needs a credential: repositories arrive as public
+ * archive downloads from codeload.
  *
  *   pnpm tsx scripts/cache-repos.ts                    # all demo repos
  *   pnpm tsx scripts/cache-repos.ts honojs/hono        # one repo
  *   pnpm tsx scripts/cache-repos.ts honojs/hono#next   # one repo, explicit branch
  *
- * When no local token is available, the same pipeline can be driven through a
- * deployed instance, which holds its own token in the Cloudflare environment:
+ * The same pipeline can also be driven through a deployed instance, which is
+ * how to confirm that what shipped produces what this script produces:
  *
  *   pnpm tsx scripts/cache-repos.ts --via https://atlascity.dev
  *
@@ -18,9 +18,8 @@
  * regenerate second, or the cache will be built by the previous pipeline.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { createGitHubClient } from '../functions/lib/github-client';
 import { ingestRepo } from '../functions/lib/agents/ingester';
 import { parseStructure } from '../functions/lib/agents/parser';
 import { generateLayout, selectRenderableEdges } from '../functions/lib/agents/layout';
@@ -35,7 +34,7 @@ interface RepoTarget {
 
 /** Where the pipeline actually runs for this invocation. */
 type Source =
-  | { kind: 'local'; token: string }
+  | { kind: 'local' }
   | { kind: 'remote'; baseUrl: string };
 
 const DEMO_REPOS: RepoTarget[] = [
@@ -45,50 +44,10 @@ const DEMO_REPOS: RepoTarget[] = [
 ];
 
 const CACHE_DIR = join(process.cwd(), 'public', 'cache');
-const DEV_VARS_PATH = join(process.cwd(), '.dev.vars');
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;
 const MAX_NODES = 500;
-
-/**
- * Read a single key from a .dev.vars style KEY=value file.
- * The value is returned to the caller and never logged.
- *
- * @param path Path to the file
- * @param key Key to look up
- * @returns The value, or null when the file or key is missing
- */
-function readDevVar(path: string, key: string): string | null {
-  let contents: string;
-  try {
-    contents = readFileSync(path, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  for (const rawLine of contents.split('\n')) {
-    const line = rawLine.trim();
-    if (line === '' || line.startsWith('#')) {
-      continue;
-    }
-
-    const separator = line.indexOf('=');
-    if (separator === -1) {
-      continue;
-    }
-
-    if (line.slice(0, separator).trim() !== key) {
-      continue;
-    }
-
-    const value = line.slice(separator + 1).trim();
-    const unquoted = value.replace(/^["']/, '').replace(/["']$/, '');
-    return unquoted === '' ? null : unquoted;
-  }
-
-  return null;
-}
 
 /**
  * Parse a CLI argument of the form `owner/repo` or `owner/repo#branch`
@@ -142,24 +101,22 @@ async function analyzeRemotely(target: RepoTarget, baseUrl: string): Promise<Ann
  * Run the four agent pipeline for one repository
  *
  * @param target Repository coordinates
- * @param token GitHub personal access token
  * @returns Annotated layout with repository statistics attached
  */
-async function analyzeRepo(target: RepoTarget, token: string): Promise<AnnotatedLayout> {
-  const octokit = createGitHubClient(token);
-
-  const ingesterResult = await ingestRepo(
-    { owner: target.owner, repo: target.repo, branch: target.branch },
-    octokit
-  );
+async function analyzeRepo(target: RepoTarget): Promise<AnnotatedLayout> {
+  const ingesterResult = await ingestRepo({
+    owner: target.owner,
+    repo: target.repo,
+    branch: target.branch,
+  });
   if (!ingesterResult.success) {
     throw new Error(`Ingester failed: ${ingesterResult.error.code} ${ingesterResult.error.message}`);
   }
 
-  const parserResult = await parseStructure(
-    { tree: ingesterResult.data.tree, owner: target.owner, repo: target.repo },
-    octokit
-  );
+  const parserResult = await parseStructure({
+    tree: ingesterResult.data.tree,
+    contents: ingesterResult.data.contents,
+  });
   if (!parserResult.success) {
     throw new Error(`Parser failed: ${parserResult.error.code} ${parserResult.error.message}`);
   }
@@ -185,9 +142,8 @@ async function analyzeRepo(target: RepoTarget, token: string): Promise<Annotated
     owner: ingesterResult.data.metadata.owner,
     repo: ingesterResult.data.metadata.repo,
     branch: ingesterResult.data.metadata.branch,
-    description: ingesterResult.data.metadata.description,
-    stars: ingesterResult.data.metadata.stars,
-    lastCommitDate: ingesterResult.data.metadata.lastCommitDate,
+    commitSha: ingesterResult.data.metadata.commitSha,
+    truncated: ingesterResult.data.metadata.truncated === true,
     totalFiles: parserResult.data.files.length,
     renderedNodes: annotatedResult.data.nodes.length,
     totalLOC: parserResult.data.metrics.totalLOC,
@@ -227,7 +183,7 @@ async function cacheRepo(target: RepoTarget, source: Source): Promise<void> {
   const layout =
     source.kind === 'remote'
       ? await analyzeRemotely(target, source.baseUrl)
-      : await analyzeRepo(target, source.token);
+      : await analyzeRepo(target);
   const elapsedSeconds = ((Date.now() - started) / 1000).toFixed(1);
 
   const filename = `${target.owner}-${target.repo}.json`;
@@ -246,6 +202,9 @@ async function cacheRepo(target: RepoTarget, source: Source): Promise<void> {
   console.log(`  highlights  entry ${counts.entry} / core ${counts.core} / hotspot ${counts.hotspot}`);
   console.log(`  labels      ${layout.labels.length}`);
   console.log(`  repo        ${meta?.totalFiles ?? 0} files, ${meta?.totalLOC ?? 0} LOC`);
+  if (meta?.truncated) {
+    console.log('  truncated   a read budget stopped the ingest before the archive ended');
+  }
   console.log(`  wrote       public/cache/${filename} (${Math.round(json.length / 1024)} KB, ${elapsedSeconds}s)`);
 }
 
@@ -278,20 +237,7 @@ async function main(): Promise<void> {
     targets.push(target);
   }
 
-  let source: Source;
-  if (baseUrl) {
-    source = { kind: 'remote', baseUrl };
-  } else {
-    const token = readDevVar(DEV_VARS_PATH, 'GITHUB_TOKEN') || process.env.GITHUB_TOKEN || '';
-    if (!token) {
-      console.error('GITHUB_TOKEN not found.');
-      console.error('Add it to .dev.vars as GITHUB_TOKEN=... or export it in the environment,');
-      console.error('or drive a deployment instead: --via https://atlascity.dev');
-      process.exit(1);
-    }
-    source = { kind: 'local', token };
-  }
-
+  const source: Source = baseUrl ? { kind: 'remote', baseUrl } : { kind: 'local' };
   const selected = targets.length > 0 ? targets : DEMO_REPOS;
 
   console.log('Atlas cache generation');

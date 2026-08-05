@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ThemeName } from '../lib/palette';
-import { createIsoRenderer, type Azimuth, type IsoRenderer, type Scene, type SceneNode } from '../lib/iso';
+import {
+  createIsoRenderer,
+  describeScene,
+  type Azimuth,
+  type IsoRenderer,
+  type Scene,
+  type SceneNode,
+} from '../lib/iso';
 import { MapControls, type ViewSettings } from './MapControls';
 import { NodeTooltip } from './NodeTooltip';
 
@@ -15,6 +22,8 @@ interface CityMapProps {
   onSettings: (patch: Partial<ViewSettings>) => void;
   onSelect: (nodeId: string | null) => void;
   onReady: (renderer: IsoRenderer | null) => void;
+  /** Opens the map key. Only rendered where the key column is not. */
+  onOpenKey: () => void;
 }
 
 export function CityMap({
@@ -28,6 +37,7 @@ export function CityMap({
   onSettings,
   onSelect,
   onReady,
+  onOpenKey,
 }: CityMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -135,6 +145,8 @@ export function CityMap({
     [azimuth, onAzimuth],
   );
 
+  const description = useMemo(() => describeScene(scene), [scene]);
+
   // Keyboard shortcuts, ignored while the visitor is typing somewhere.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -184,12 +196,24 @@ export function CityMap({
 
   return (
     <div ref={containerRef} className="bg-inset relative min-h-0 flex-1 overflow-hidden">
-      <svg
-        ref={svgRef}
-        className="atlas-canvas"
-        role="application"
-        aria-label="Isometric map of the repository. Drag to pan, scroll to zoom, click a building for details."
-      />
+      {/*
+        `role="img"` rather than `role="application"`. Application tells a
+        screen reader to pass keystrokes through to the widget, which was wrong
+        twice over here: the element is not focusable, so nobody could ever get
+        into it, and the shortcuts are bound to the window anyway. It also
+        makes the three thousand roleless children presentational, which they
+        already were in effect.
+      */}
+      <svg ref={svgRef} className="atlas-canvas" role="img" aria-label="Isometric map of the repository" />
+
+      {/*
+        The same map as prose. Marked as a status region so finishing a render
+        is announced, which was previously silent: the loading state politely
+        said it was working and then nothing ever said it had finished.
+      */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {description}
+      </p>
 
       <MapControls
         azimuth={azimuth}
@@ -200,9 +224,10 @@ export function CityMap({
         onReset={() => rendererRef.current?.resetView()}
         onRotate={rotate}
         onSettings={onSettings}
+        onOpenKey={onOpenKey}
       />
 
-      <p className="text-tertiary pointer-events-none absolute bottom-3 left-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
+      <p className="text-tertiary hint-fine pointer-events-none inset-safe-left absolute bottom-3 flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
         <span>
           <span className="kbd">drag</span> pan
         </span>
@@ -215,6 +240,12 @@ export function CityMap({
         <span>
           <span className="kbd">0</span> fit
         </span>
+      </p>
+
+      <p className="text-tertiary hint-coarse pointer-events-none inset-safe-left absolute bottom-3 flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
+        <span>drag to pan</span>
+        <span>pinch to zoom</span>
+        <span>tap a building</span>
       </p>
 
       <NodeTooltip node={hover?.node ?? null} at={hover?.at ?? null} theme={theme} />

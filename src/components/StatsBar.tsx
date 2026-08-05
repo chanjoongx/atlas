@@ -14,7 +14,7 @@ export function StatsBar({ stats, theme }: StatsBarProps) {
   const restShare = stats.languages.slice(MAX_SLICES).reduce((sum, lang) => sum + lang.share, 0);
 
   return (
-    <div className="border-line bg-surface flex flex-wrap items-center gap-x-6 gap-y-3 border-t px-4 py-2.5">
+    <div className="border-line bg-surface pad-safe-x pad-safe-bottom flex flex-wrap items-center gap-x-6 gap-y-3 border-t pt-2.5">
       <dl className="flex flex-wrap items-center gap-x-5 gap-y-1">
         <Stat label="Files" value={stats.fileCount.toLocaleString()} />
         <Stat label="Lines" value={compact(stats.totalLoc)} />

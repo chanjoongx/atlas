@@ -9,7 +9,7 @@ Atlas turns a public GitHub repository into an interactive isometric map. Direct
 [**Open the live demo**](https://atlascity.dev) &nbsp;·&nbsp; [Try Hono](https://atlascity.dev/?repo=honojs/hono) &nbsp;·&nbsp; [Try Drizzle ORM](https://atlascity.dev/?repo=drizzle-team/drizzle-orm)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0f62fe?style=flat-square)](./LICENSE)
-![Tests](https://img.shields.io/badge/tests-216%20passing-42be65?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-262%20passing-42be65?style=flat-square)
 ![Built on](https://img.shields.io/badge/Cloudflare-Pages%20Functions-f38020?style=flat-square)
 [![Hackathon](https://img.shields.io/badge/IBM%20Bob%20Hackathon-2nd%20of%20503-ff832b?style=flat-square)](https://lablab.ai/ai-hackathons/ibm-bob-hackathon)
 
@@ -69,7 +69,7 @@ Four agents, one request, no model in the loop. The same repository always produ
 
 ```mermaid
 flowchart LR
-    R["GitHub<br/>repository"] --> I["<b>Ingester</b><br/>file tree<br/>metadata"]
+    R["GitHub<br/>repository"] --> I["<b>Ingester</b><br/>stream one<br/>tar archive"]
     I --> P["<b>Parser</b><br/>classify files<br/>resolve imports"]
     P --> L["<b>Layout</b><br/>force simulation<br/>district clustering"]
     L --> A["<b>Annotator</b><br/>centrality<br/>landmarks"]
@@ -83,10 +83,12 @@ flowchart LR
     style M fill:#131519,stroke:#ff832b,color:#e9eaec
 ```
 
-1. **Ingester** pulls the file tree and repository metadata from the GitHub API.
+1. **Ingester** downloads the repository as one gzipped tar archive from `codeload.github.com`, the endpoint `git clone` reads, and streams it straight through `DecompressionStream`. File tree, sizes and source text arrive together in a single request.
 2. **Parser** classifies every file, counts its lines, and resolves local imports against the real file list, so an edge is only drawn when its target actually exists.
 3. **Layout** settles a force directed simulation with district clustering, so related files end up as neighbours.
 4. **Annotator** scores in-degree centrality and promotes the few files worth naming, under a per kind quota so a map always shows a mix rather than fifty of one thing.
+
+Nothing in that pipeline authenticates. Public archives are served to anonymous callers, so Atlas holds no API key, has no rate limit to share out among its visitors and has no credential that can expire underneath it. One request per map instead of 243 also made it three to thirty times faster, and the parser now reads whole files rather than a sample of them, which is where the extra dependency arcs came from.
 
 Rendering is a hand written isometric projection over SVG: 2:1 tiles, three shaded faces per building, painter's algorithm depth sorting. No WebGL, which is why the same code path produces both the interactive canvas and the exported PNG. The landing page skyline runs the same projection on a canvas, with a camera that turns continuously, so it has to work out which of a box's four side faces are visible per frame rather than assuming three.
 
@@ -100,13 +102,13 @@ The state submitted to the hackathon is permanently tagged **[`v1.0-hackathon`](
 
 **Built during the 48 hours:** the four agent pipeline, the force layout, the 2D renderer, PNG export, the demo cache, 78 tests.
 
-**Added since:** the isometric renderer, the Carbon and Paper themes, the brand and icon set, the file inspector and legend, shareable URLs, the animated skyline, real import resolution (the original shipped with a resolver that could fabricate targets, so every map drew zero dependency arcs), per kind landmark quotas, and the test suite at 216.
+**Added since:** the isometric renderer, the Carbon and Paper themes, the brand and icon set, the file inspector and legend, shareable URLs, the animated skyline, real import resolution (the original shipped with a resolver that could fabricate targets, so every map drew zero dependency arcs), per kind landmark quotas, archive based ingestion that needs no GitHub credentials at all, and the test suite at 262.
 
 | Stat | Count |
 |---|---|
 | Bob sessions | 12, exported to [`bob_sessions/`](./bob_sessions/) |
 | Pipeline agents | Ingester, Parser, Layout, Annotator |
-| Tests | 216 passing |
+| Tests | 262 passing |
 
 ---
 
@@ -117,7 +119,7 @@ The state submitted to the hackathon is permanently tagged **[`v1.0-hackathon`](
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS |
 | Rendering | Custom isometric projection over SVG and canvas, `d3-zoom` for the camera |
 | Layout | `d3-force` |
-| Backend | Cloudflare Pages Functions, Octokit REST |
+| Backend | Cloudflare Pages Functions, no runtime dependencies |
 | Package manager | pnpm |
 
 ---
@@ -134,7 +136,6 @@ MIT. See [LICENSE](./LICENSE).
 - **[lablab.ai](https://lablab.ai/ai-hackathons/ibm-bob-hackathon)**: for hosting the hackathon
 - **[Cloudflare Pages](https://pages.cloudflare.com/)**: serverless hosting
 - **[D3](https://d3js.org/)**: force simulation and camera
-- **[Octokit](https://github.com/octokit/octokit.js)**: GitHub API client
 - **[shadcn/ui](https://github.com/shadcn-ui/ui), [Hono](https://github.com/honojs/hono), [Drizzle ORM](https://github.com/drizzle-team/drizzle-orm)**: the open source projects featured as demos
 
 ---

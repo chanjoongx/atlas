@@ -17,7 +17,7 @@ import type { Scene, SceneNode } from './scene';
 
 export type { Azimuth } from './projection';
 export type { Scene, SceneNode, SceneStats, SceneDistrict } from './scene';
-export { buildScene } from './scene';
+export { buildScene, describeScene } from './scene';
 
 /** Entrance sweep, long enough to cover the last building's delay. */
 const ENTRANCE_MS = 1400;
@@ -26,6 +26,28 @@ const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 12;
 const LABEL_BASE = 11.5;
 const DISTRICT_LABEL_BASE = 12;
+
+/**
+ * How far from a building a pointer may be and still mean it, in screen pixels.
+ *
+ * A phone renders a 469 file city into 390 points, which puts the median
+ * building at 3.8px across and every single one of them under the 44px a
+ * fingertip actually covers. Exact hit testing then resolves a tap by whichever
+ * roof happens to lie under the reported contact point, and measured on a
+ * 390x844 viewport a tap six pixels off centre opened the intended file once in
+ * twelve tries and opened some *other* file ten times. It never reads as a
+ * miss, because at that density there is always another building under the
+ * finger, so the inspector opens confidently on the wrong one.
+ *
+ * Resolving by nearest centroid instead cannot make a 3.8px target easy to hit,
+ * and nothing can. What it can do is make the answer predictable and therefore
+ * correctable: the building nearest the finger, rather than whichever one
+ * happens to be standing in front. That second part matters on a mouse too,
+ * where a tall tower hides the roof of a short one behind it and cost 22% of
+ * clicks aimed dead centre.
+ */
+const TOLERANCE_COARSE = 22;
+const TOLERANCE_FINE = 7;
 
 export interface IsoOptions {
   /** Built by `buildScene`, owned by the caller so panels can share it. */
@@ -137,6 +159,9 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
     const camera = svgElement.querySelector<SVGGElement>('.atlas-camera');
     if (camera) camera.setAttribute('transform', transform.toString());
     scaleTypography();
+    // Nothing else can move the fitted group, and `render` ends here too, so
+    // this one line covers every way the screen mapping can go out of date.
+    ctmStale = true;
   }
 
   /** Labels are anchored in world space but must stay a constant screen size. */
@@ -197,10 +222,118 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
   /* ---------------------------------------------------------------------- */
   /* Pointer handling, by delegation                                         */
 
-  function nodeIdFromEvent(event: Event): string | null {
+  /** Every building's visual centre and half extents, in fitted coordinates. */
+  let targets: Array<{ id: string; x: number; y: number; hx: number; hy: number }> = [];
+  let targetsScene: Scene | null = null;
+  let targetsAzimuth: Azimuth | null = null;
+
+  function ensureTargets(): void {
+    if (targetsScene === scene && targetsAzimuth === options.azimuth) return;
+    targets = scene.nodes.map((node) => {
+      const points = silhouette(node, options.azimuth);
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const point of points) {
+        if (point.x < minX) minX = point.x;
+        if (point.x > maxX) maxX = point.x;
+        if (point.y < minY) minY = point.y;
+        if (point.y > maxY) maxY = point.y;
+      }
+      return {
+        id: node.id,
+        x: (minX + maxX) / 2,
+        y: (minY + maxY) / 2,
+        hx: (maxX - minX) / 2,
+        hy: (maxY - minY) / 2,
+      };
+    });
+    targetsScene = scene;
+    targetsAzimuth = options.azimuth;
+  }
+
+  /**
+   * Screen to world, cached.
+   *
+   * `getScreenCTM` forces a layout flush, and a pointer can move sixty times a
+   * second, so the matrix is read at most once per change to it: only `render`
+   * and `applyTransform` can move the fitted group, and both mark it stale.
+   */
+  let inverseCtm: DOMMatrix | null = null;
+  let ctmScale = 1;
+  let ctmStale = true;
+
+  function toWorld(clientX: number, clientY: number): { x: number; y: number; scale: number } | null {
+    if (ctmStale) {
+      const fitGroup = svgElement.querySelector<SVGGElement>('.atlas-fit');
+      const matrix = typeof fitGroup?.getScreenCTM === 'function' ? fitGroup.getScreenCTM() : null;
+      inverseCtm = matrix && typeof matrix.inverse === 'function' ? matrix.inverse() : null;
+      ctmScale = matrix ? Math.hypot(matrix.a, matrix.b) || 1 : 1;
+      ctmStale = false;
+    }
+    if (!inverseCtm) return null;
+    const m = inverseCtm;
+    return {
+      x: m.a * clientX + m.c * clientY + m.e,
+      y: m.b * clientX + m.d * clientY + m.f,
+      scale: ctmScale,
+    };
+  }
+
+  /**
+   * The building a pointer is closest to, allowing for its own size.
+   *
+   * Distance is measured to the building rather than to its centre, by growing
+   * each silhouette by the tolerance and asking which grown shape the pointer is
+   * furthest inside. Plain nearest centroid gets this wrong in the case that
+   * matters most: a fingertip resting on the side of a tall tower is fifteen
+   * pixels from that tower's centre and eight from the centre of the little
+   * building tucked in beside it, so the strictly nearest answer is the one
+   * the finger is not touching and cannot even see.
+   */
+  function nearestNodeId(clientX: number, clientY: number, tolerance: number): string | null {
+    const world = toWorld(clientX, clientY);
+    if (!world) return null;
+    ensureTargets();
+
+    // The tolerance describes the pointing device, not the camera, so it is
+    // carried from screen pixels into world units at the current zoom.
+    const reach = tolerance / world.scale;
+    let best: string | null = null;
+    let bestScore = 1;
+    for (const target of targets) {
+      const dx = (target.x - world.x) / (target.hx + reach);
+      const dy = (target.y - world.y) / (target.hy + reach);
+      const score = dx * dx + dy * dy;
+      if (score < bestScore) {
+        bestScore = score;
+        best = target.id;
+      }
+    }
+    return best;
+  }
+
+  function isCoarse(event: MouseEvent): boolean {
+    const pointerType = (event as PointerEvent).pointerType;
+    if (pointerType) return pointerType === 'touch' || pointerType === 'pen';
+    return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  }
+
+  function nodeIdFromEvent(event: MouseEvent): string | null {
     const target = event.target as Element | null;
-    const group = target?.closest?.('[data-node]');
-    return group?.getAttribute('data-node') ?? null;
+    const exact = target?.closest?.('[data-node]')?.getAttribute('data-node') ?? null;
+    const coarse = isCoarse(event);
+    const near = nearestNodeId(
+      event.clientX,
+      event.clientY,
+      coarse ? TOLERANCE_COARSE : TOLERANCE_FINE,
+    );
+    // A finger leads with proximity: what it covers is a blob nine millimetres
+    // across, and the single point the browser reports for it is close to
+    // arbitrary at this density. A mouse leads with the exact hit, which is
+    // precise, and only falls back to proximity in the gaps between roofs.
+    return coarse ? (near ?? exact) : (exact ?? near);
   }
 
   function onPointerMove(event: PointerEvent): void {

@@ -82,7 +82,7 @@ export async function annotateLayout(
     }
 
     // Calculate centrality for all nodes
-    const centrality = calculateCentrality(layout);
+    const centrality = calculateCentrality(layout, structure);
 
     // Generate highlights
     const highlights = generateHighlights(layout, structure, centrality);
@@ -111,9 +111,25 @@ export async function annotateLayout(
 }
 
 /**
- * Calculate in-degree and out-degree centrality for all nodes
+ * Calculate in-degree and out-degree centrality for all nodes.
+ *
+ * Counted over every dependency between two rendered files, not over the edges
+ * the layout chose to draw. Those are different sets whenever a repository has
+ * more dependencies than MAX_RENDERED_EDGES, and using the drawn set made
+ * centrality a property of the drawing rather than of the software: on
+ * drizzle-orm the cap left only 22 files with any in-degree at all, so the core
+ * pool, which is the top tenth of files that anything imports, fell from 18
+ * modules to 3. It also made the label lie, since "Imported by 276 files"
+ * counted arcs on the canvas rather than importers in the repository.
+ *
+ * Duplicates are collapsed first. A file that both imports and re-exports
+ * another produces two dependencies for one relationship, and the renderer
+ * already treats that as a single arc.
  */
-function calculateCentrality(layout: LayoutData): Map<string, NodeCentrality> {
+function calculateCentrality(
+  layout: LayoutData,
+  structure: CodeStructure
+): Map<string, NodeCentrality> {
   const centrality = new Map<string, NodeCentrality>();
 
   // Initialize all nodes with zero centrality
@@ -121,17 +137,30 @@ function calculateCentrality(layout: LayoutData): Map<string, NodeCentrality> {
     centrality.set(node.id, { inDegree: 0, outDegree: 0 });
   }
 
-  // Count degrees from edges
-  for (const edge of layout.edges) {
-    const sourceMetrics = centrality.get(edge.source);
-    const targetMetrics = centrality.get(edge.target);
+  const counted = new Set<string>();
 
-    if (sourceMetrics) {
-      sourceMetrics.outDegree++;
+  for (const dependency of structure.dependencies) {
+    const sourceMetrics = centrality.get(dependency.from);
+    const targetMetrics = centrality.get(dependency.to);
+
+    // Both ends have to be on the map. A dependency on a file that was not
+    // selected for rendering is real, but it is not something a viewer can see
+    // or click, so counting it would make a building's stated importance
+    // impossible to verify against the picture.
+    if (!sourceMetrics || !targetMetrics) {
+      continue;
     }
-    if (targetMetrics) {
-      targetMetrics.inDegree++;
+
+    // NUL separated: a path can contain any character a separator might pick,
+    // including a space or a pipe, but never a NUL.
+    const key = `${dependency.from}\u0000${dependency.to}`;
+    if (counted.has(key)) {
+      continue;
     }
+    counted.add(key);
+
+    sourceMetrics.outDegree++;
+    targetMetrics.inDegree++;
   }
 
   return centrality;

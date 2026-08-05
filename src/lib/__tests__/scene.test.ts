@@ -12,6 +12,7 @@ import type { AnnotatedLayout, District, FileType, Highlight, LayoutEdge, Layout
 import {
   UNCLASSIFIED,
   buildScene,
+  describeScene,
   placeDistricts,
   placeNodes,
   sceneBounds,
@@ -974,5 +975,37 @@ describe('a repo with nothing in it', () => {
         }),
       ),
     ).not.toThrow();
+  });
+});
+
+describe('describing a map for a screen reader', () => {
+  const city = layout({
+    nodes: [
+      node({ id: 'src/index.ts', loc: 900 }),
+      node({ id: 'src/util.ts', loc: 120 }),
+      node({ id: 'docs/readme.md', loc: 40 }),
+    ],
+    districts: [district('src', ['src/index.ts', 'src/util.ts']), district('docs', ['docs/readme.md'])],
+    highlights: [highlight({ nodeId: 'src/index.ts', type: 'entry' })],
+  });
+
+  it('states the size, the districts, the landmarks and the largest files', () => {
+    const text = describeScene(buildScene(city));
+
+    expect(text).toContain('3 files in 2 districts');
+    expect(text).toContain('src, 2 files');
+    expect(text).toContain('src/index.ts, 900 lines');
+    expect(text).toContain('Median file is 120 lines');
+  });
+
+  it('does not say "1 entry points"', () => {
+    const text = describeScene(buildScene(city));
+
+    expect(text).toContain('1 entry point.');
+    expect(text).not.toContain('1 entry points');
+  });
+
+  it('says something rather than nothing for an empty city', () => {
+    expect(describeScene(buildScene(layout()))).toBe('The map is empty.');
   });
 });
