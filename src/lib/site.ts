@@ -8,7 +8,7 @@
  * Moving to a custom domain is therefore a one line change here.
  */
 
-export const SITE_ORIGIN = 'https://atlas-1q0.pages.dev';
+export const SITE_ORIGIN = 'https://atlascity.dev';
 
 /** Host on its own, for places where a scheme would be noise. */
 export const SITE_HOST = SITE_ORIGIN.replace(/^https?:\/\//, '');

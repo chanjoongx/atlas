@@ -12,7 +12,7 @@
  * When no local token is available, the same pipeline can be driven through a
  * deployed instance, which holds its own token in the Cloudflare environment:
  *
- *   pnpm tsx scripts/cache-repos.ts --via https://atlas-1q0.pages.dev
+ *   pnpm tsx scripts/cache-repos.ts --via https://atlascity.dev
  *
  * That mode maps whatever code is deployed at that URL, so deploy first and
  * regenerate second, or the cache will be built by the previous pipeline.
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
       baseUrl = args[i + 1] ?? null;
       i += 1;
       if (!baseUrl) {
-        console.error('--via needs a URL, for example --via https://atlas-1q0.pages.dev');
+        console.error('--via needs a URL, for example --via https://atlascity.dev');
         process.exit(1);
       }
       continue;
@@ -286,7 +286,7 @@ async function main(): Promise<void> {
     if (!token) {
       console.error('GITHUB_TOKEN not found.');
       console.error('Add it to .dev.vars as GITHUB_TOKEN=... or export it in the environment,');
-      console.error('or drive a deployment instead: --via https://atlas-1q0.pages.dev');
+      console.error('or drive a deployment instead: --via https://atlascity.dev');
       process.exit(1);
     }
     source = { kind: 'local', token };

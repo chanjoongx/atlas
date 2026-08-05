@@ -6,7 +6,7 @@
 
 Atlas turns a public GitHub repository into an interactive isometric map. Directories become districts, files become buildings as tall as the code inside them, and the handful of files that actually matter stand out as landmarks.
 
-[**Open the live demo**](https://atlas-1q0.pages.dev) &nbsp;·&nbsp; [Try Hono](https://atlas-1q0.pages.dev/?repo=honojs/hono) &nbsp;·&nbsp; [Try Drizzle ORM](https://atlas-1q0.pages.dev/?repo=drizzle-team/drizzle-orm)
+[**Open the live demo**](https://atlascity.dev) &nbsp;·&nbsp; [Try Hono](https://atlascity.dev/?repo=honojs/hono) &nbsp;·&nbsp; [Try Drizzle ORM](https://atlascity.dev/?repo=drizzle-team/drizzle-orm)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0f62fe?style=flat-square)](./LICENSE)
 ![Tests](https://img.shields.io/badge/tests-216%20passing-42be65?style=flat-square)
@@ -53,11 +53,11 @@ Pick a building and the map answers a different question: what does this file to
 
 ## Try it
 
-1. Open **[atlas-1q0.pages.dev](https://atlas-1q0.pages.dev)**
+1. Open **[atlascity.dev](https://atlascity.dev)**
 2. Pick a prebuilt demo, or paste any public repository. `owner/repo` and full GitHub URLs both work.
 3. Drag to pan, scroll to zoom, `[` and `]` to rotate, click a building for its details.
 
-Any map is linkable: [`?repo=honojs/hono`](https://atlas-1q0.pages.dev/?repo=honojs/hono) opens straight into it. Every map exports to PNG at up to 3x with a caption band, which is what the images above are.
+Any map is linkable: [`?repo=honojs/hono`](https://atlascity.dev/?repo=honojs/hono) opens straight into it. Every map exports to PNG at up to 3x with a caption band, which is what the images above are.
 
 The three demos are pre-rendered into `public/cache/` and load with no API call at all. Everything else runs the live pipeline.
 
