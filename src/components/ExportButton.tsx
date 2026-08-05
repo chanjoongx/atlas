@@ -1,106 +1,161 @@
-import { useState } from 'react';
-import { exportAsPNG } from '../lib/png-export';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronDown, Clipboard, Download, Loader2 } from 'lucide-react';
+import type { ThemeName } from '../lib/palette';
+import type { IsoRenderer, SceneStats } from '../lib/iso';
+import { canCopyImages, copyPngToClipboard, downloadPng, type ExportScale } from '../lib/png-export';
 
 interface ExportButtonProps {
-  svgElement: SVGSVGElement | null;
-  disabled?: boolean;
-  repoName?: string;
+  renderer: IsoRenderer | null;
+  theme: ThemeName;
+  repo: string | null;
+  stats: SceneStats | null;
 }
 
-export function ExportButton({ svgElement, disabled, repoName }: ExportButtonProps) {
-  const [exporting, setExporting] = useState(false);
-  const [success, setSuccess] = useState(false);
+/** Fixed export frame, so every shared map has the same proportions. */
+const FRAME = { width: 1600, height: 1000 };
+const CAPTION = 64;
+const SCALES: ExportScale[] = [1, 2, 3];
 
-  const handleExport = async () => {
-    if (!svgElement || disabled) return;
+export function ExportButton({ renderer, theme, repo, stats }: ExportButtonProps) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<'download' | 'copy' | null>(null);
+  const [done, setDone] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
 
-    setExporting(true);
-    setSuccess(false);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
 
+  useEffect(() => {
+    if (!done) return;
+    const id = window.setTimeout(() => setDone(false), 1800);
+    return () => window.clearTimeout(id);
+  }, [done]);
+
+  const payload = () => {
+    if (!renderer) return null;
+    return {
+      markup: renderer.exportMarkup(FRAME.width, FRAME.height),
+      width: FRAME.width,
+      height: FRAME.height,
+      theme,
+      title: repo ?? undefined,
+      subtitle: stats
+        ? `${stats.fileCount.toLocaleString()} files, ${stats.districtCount} districts, ${stats.totalLoc.toLocaleString()} lines`
+        : undefined,
+    };
+  };
+
+  const run = async (task: 'download' | 'copy', scale: ExportScale = 2) => {
+    const base = payload();
+    if (!base) return;
+    setOpen(false);
+    setFailed(false);
+    setBusy(task);
     try {
-      const filename = repoName
-        ? `atlas-${repoName.replace('/', '-')}.png`
-        : 'atlas-city-map.png';
-      
-      await exportAsPNG(svgElement, filename);
-      
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Failed to export PNG. Please try again.');
+      if (task === 'copy') {
+        await copyPngToClipboard({ ...base, scale });
+      } else {
+        const slug = (repo ?? 'repository').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+        await downloadPng({ ...base, scale }, `atlas-${slug}-${scale}x.png`);
+      }
+      setDone(true);
+    } catch {
+      setFailed(true);
     } finally {
-      setExporting(false);
+      setBusy(null);
     }
   };
 
+  const disabled = !renderer || busy !== null;
+
   return (
-    <button
-      onClick={handleExport}
-      disabled={disabled || exporting}
-      className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-slate-950"
-    >
-      {exporting ? (
-        <>
-          <svg
-            className="animate-spin h-4 w-4"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-          Exporting...
-        </>
-      ) : success ? (
-        <>
-          <svg
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
-          Exported!
-        </>
-      ) : (
-        <>
-          <svg
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-            />
-          </svg>
-          Export as PNG
-        </>
+    <div ref={wrapper} className="relative">
+      <div className="flex">
+        <button
+          type="button"
+          onClick={() => run('download', 2)}
+          disabled={disabled}
+          className="btn btn-secondary rounded-r-none border-r-0 pr-2.5"
+        >
+          {busy === 'download' ? (
+            <Loader2 size={14} aria-hidden className="animate-spin" />
+          ) : done ? (
+            <Check size={14} aria-hidden className="text-success" />
+          ) : (
+            <Download size={14} aria-hidden />
+          )}
+          <span className="hidden sm:inline">{done ? 'Saved' : 'Export'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          disabled={disabled}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label="Export options"
+          className="btn btn-secondary rounded-l-none px-1.5"
+        >
+          <ChevronDown size={14} aria-hidden />
+        </button>
+      </div>
+
+      {open && (
+        <div
+          role="menu"
+          className="surface animate-fade-up absolute right-0 top-full z-40 mt-1.5 w-56 p-1 shadow-lg"
+        >
+          <p className="eyebrow px-2 pb-1 pt-1.5">Download PNG</p>
+          {SCALES.map((scale) => (
+            <button
+              key={scale}
+              role="menuitem"
+              type="button"
+              onClick={() => run('download', scale)}
+              className="hover:bg-surface-hover flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left text-xs transition-colors"
+            >
+              <span className="text-secondary">{scale}x</span>
+              <span className="tabular text-tertiary text-2xs">
+                {FRAME.width * scale} x {(FRAME.height + CAPTION) * scale}
+              </span>
+            </button>
+          ))}
+
+          {canCopyImages() && (
+            <>
+              <div className="bg-subtle my-1 h-px" aria-hidden />
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => run('copy', 2)}
+                className="hover:bg-surface-hover flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs transition-colors"
+              >
+                <Clipboard size={13} aria-hidden className="text-tertiary" />
+                <span className="text-secondary">Copy to clipboard</span>
+              </button>
+            </>
+          )}
+        </div>
       )}
-    </button>
+
+      {failed && (
+        <p role="status" className="text-danger absolute right-0 top-full mt-1 whitespace-nowrap text-2xs">
+          Export failed. Try again.
+        </p>
+      )}
+    </div>
   );
 }
-
-// Made with Bob

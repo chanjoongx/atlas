@@ -1,87 +1,73 @@
 import type { AnnotatedLayout } from '../types';
-
-export interface AnalyzeRequest {
-  owner: string;
-  repo: string;
-  branch?: string;
-}
-
-// Backend returns raw AnnotatedLayout, not wrapped
-// Keeping interface for reference but not using it
-export interface AnalyzeResponse {
-  layout: AnnotatedLayout;
-  cached: boolean;
-}
+import type { RepoRef } from './repo-ref';
 
 export class ApiError extends Error {
   constructor(
     message: string,
     public status?: number,
-    public details?: unknown
+    public code?: string,
+    public details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-/**
- * Fetch annotated layout for a repository.
- * Tries pre-cached JSON first, falls back to API analyze endpoint.
- */
-export async function fetchAnnotatedLayout(
-  owner: string,
-  repo: string,
-  branch?: string
-): Promise<AnnotatedLayout> {
-  // Try cache first (faster, no API call)
-  const cacheKey = `${owner}-${repo}`;
-  try {
-    const cacheResponse = await fetch(`/cache/${cacheKey}.json`);
-    if (cacheResponse.ok) {
-      const data = await cacheResponse.json();
-      console.log(`✓ Loaded from cache: ${cacheKey}`);
-      return data as AnnotatedLayout;
-    }
-  } catch (error) {
-    console.log(`Cache miss for ${cacheKey}, falling back to API`);
-  }
-
-  // Fallback to API analyze endpoint
-  try {
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        owner,
-        repo,
-        branch: branch || 'main',
-      } as AnalyzeRequest),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new ApiError(
-        errorData.error || `API request failed: ${response.statusText}`,
-        response.status,
-        errorData
-      );
-    }
-
-    const data = await response.json();
-    console.log(`✓ Analyzed via API: ${owner}/${repo}`);
-    return data as AnnotatedLayout;
-  } catch (error) {
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    throw new ApiError(
-      `Failed to fetch layout: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      undefined,
-      error
-    );
-  }
+interface ErrorBody {
+  error?: { code?: string; message?: string } | string;
 }
 
-// Made with Bob
+/**
+ * Fetch a layout for a repository.
+ *
+ * Demo repositories are pre-rendered into `public/cache` at build time and are
+ * served as plain static JSON, which is why they open instantly and keep
+ * working even when the GitHub token behind the live pipeline is unavailable.
+ * Everything else goes through the four agent pipeline in `functions/api`.
+ */
+export async function fetchAnnotatedLayout(ref: RepoRef): Promise<AnnotatedLayout> {
+  const cached = await readCache(ref);
+  if (cached) return cached;
+
+  let response: Response;
+  try {
+    response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner: ref.owner, repo: ref.repo, branch: ref.branch }),
+    });
+  } catch (error) {
+    throw new ApiError(
+      'The analyzer could not be reached.',
+      undefined,
+      'NETWORK',
+      error,
+    );
+  }
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ErrorBody;
+    const detail = typeof body.error === 'object' ? body.error : undefined;
+    throw new ApiError(
+      detail?.message ?? (typeof body.error === 'string' ? body.error : response.statusText),
+      response.status,
+      detail?.code,
+      body,
+    );
+  }
+
+  return (await response.json()) as AnnotatedLayout;
+}
+
+/** A cache miss is the normal path for custom repositories, not an error. */
+async function readCache(ref: RepoRef): Promise<AnnotatedLayout | null> {
+  if (ref.branch) return null; // cached maps are of the default branch only
+  try {
+    const response = await fetch(`/cache/${ref.owner}-${ref.repo}.json`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as AnnotatedLayout;
+    return Array.isArray(data?.nodes) ? data : null;
+  } catch {
+    return null;
+  }
+}

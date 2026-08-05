@@ -1,0 +1,189 @@
+/**
+ * Atlas design tokens.
+ *
+ * Two themes share one semantic vocabulary:
+ *   - carbon  (dark)  neutral ink, IBM-adjacent. Default.
+ *   - paper   (light) warm paper, cool blue accent.
+ *
+ * Components only ever read semantic tokens (--bg-*, --text-*, --map-*).
+ * Raw scales stay private to this file so a retheme never touches a component.
+ */
+
+:root {
+  /* ---- Type ------------------------------------------------------------ */
+  --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, system-ui,
+    -apple-system, 'Segoe UI Variable Display', 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', 'Cascadia Mono',
+    'Segoe UI Mono', Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.8125rem;  /* 13px */
+  --text-base: 0.9375rem;/* 15px */
+  --text-lg: 1.0625rem;  /* 17px */
+  --text-xl: 1.375rem;   /* 22px */
+  --text-2xl: 1.875rem;  /* 30px */
+  --text-3xl: 2.5rem;    /* 40px */
+  --text-4xl: 3.25rem;   /* 52px */
+
+  --tracking-tight: -0.018em;
+  --tracking-snug: -0.01em;
+  --tracking-wide: 0.04em;
+  --tracking-caps: 0.09em;
+
+  /* ---- Radius ---------------------------------------------------------- */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+  --radius-full: 999px;
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-instant: 90ms;
+  --dur-fast: 160ms;
+  --dur-base: 240ms;
+  --dur-slow: 420ms;
+}
+
+/* District hues live in src/lib/palette.ts, which is the single source of
+   truth for anything drawn onto the map. The map tokens below are read back
+   at render time via getComputedStyle, so the canvas follows the theme. */
+
+/* ======================================================================== */
+/* Carbon (dark)                                                            */
+/* ======================================================================== */
+
+:root,
+:root[data-theme='carbon'] {
+  color-scheme: dark;
+
+  --bg-canvas: #0b0c0e;
+  --bg-canvas-deep: #08090b;
+  --bg-surface: #131519;
+  --bg-surface-raised: #191c21;
+  --bg-surface-hover: #1f232a;
+  --bg-inset: #0d0f12;
+  --bg-overlay: rgba(8, 9, 11, 0.82);
+  --bg-scrim: rgba(8, 9, 11, 0.6);
+
+  --border-subtle: #1d2026;
+  --border-default: #24272e;
+  --border-strong: #333841;
+
+  --text-primary: #e9eaec;
+  --text-secondary: #a2a9b4;
+  --text-tertiary: #767d89;
+  --text-placeholder: #565d68;
+  --text-inverse: #0b0c0e;
+
+  --accent: #4589ff;
+  --accent-hover: #6ea6ff;
+  --accent-active: #2f6ee0;
+  --accent-subtle: rgba(69, 137, 255, 0.14);
+  --accent-ring: rgba(69, 137, 255, 0.45);
+  --accent-contrast: #ffffff;
+
+  --signal-entry: #82cfff;
+  --signal-core: #f4f4f4;
+  --signal-hotspot: #ff832b;
+  --signal-danger: #ff6b74;
+  --signal-danger-bg: rgba(250, 77, 86, 0.12);
+  --signal-success: #42be65;
+  --signal-warning: #f1c21b;
+
+  /* Map surface ---------------------------------------------------------- */
+  --map-sky-top: #090a0d;
+  --map-sky-mid: #0e1116;
+  --map-sky-bottom: #14181f;
+  --map-halo: rgba(69, 137, 255, 0.1);
+  --map-grid: rgba(150, 165, 190, 0.055);
+  --map-grid-major: rgba(150, 165, 190, 0.1);
+  --map-ground-shadow: rgba(0, 0, 0, 0.55);
+  --map-edge: rgba(160, 178, 208, 0.5);
+  --map-label: #ffffff;
+  --map-label-halo: rgba(6, 7, 9, 0.88);
+  --map-district-label: rgba(255, 255, 255, 0.62);
+  --map-vignette: rgba(0, 0, 0, 0.42);
+
+  /* Building face multipliers (percentage points of HSL lightness) -------- */
+  --face-top: 13;
+  --face-left: -5;
+  --face-right: -16;
+  --face-sat-top: -6;
+  --face-sat-right: -8;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ======================================================================== */
+/* Paper (light)                                                            */
+/* ======================================================================== */
+
+:root[data-theme='paper'] {
+  color-scheme: light;
+
+  --bg-canvas: #faf9f7;
+  --bg-canvas-deep: #f3f1ed;
+  --bg-surface: #ffffff;
+  --bg-surface-raised: #ffffff;
+  --bg-surface-hover: #f3f1ed;
+  --bg-inset: #f6f4f0;
+  --bg-overlay: rgba(255, 255, 255, 0.9);
+  --bg-scrim: rgba(28, 26, 23, 0.34);
+
+  --border-subtle: #ece9e3;
+  --border-default: #ddd9d1;
+  --border-strong: #c4bfb5;
+
+  --text-primary: #1c1a17;
+  --text-secondary: #55514a;
+  --text-tertiary: #7d776d;
+  --text-placeholder: #9a9488;
+  --text-inverse: #ffffff;
+
+  --accent: #0f62fe;
+  --accent-hover: #0353e9;
+  --accent-active: #002d9c;
+  --accent-subtle: rgba(15, 98, 254, 0.09);
+  --accent-ring: rgba(15, 98, 254, 0.38);
+  --accent-contrast: #ffffff;
+
+  --signal-entry: #0072c3;
+  --signal-core: #4b4740;
+  --signal-hotspot: #c4531a;
+  --signal-danger: #c21e2b;
+  --signal-danger-bg: rgba(194, 30, 43, 0.08);
+  --signal-success: #0e6027;
+  --signal-warning: #9a6a00;
+
+  --map-sky-top: #fbfaf8;
+  --map-sky-mid: #f4f2ed;
+  --map-sky-bottom: #eae6de;
+  --map-halo: rgba(15, 98, 254, 0.05);
+  --map-grid: rgba(60, 52, 40, 0.055);
+  --map-grid-major: rgba(60, 52, 40, 0.1);
+  --map-ground-shadow: rgba(52, 44, 32, 0.16);
+  --map-edge: rgba(72, 64, 52, 0.42);
+  --map-label: #17150f;
+  --map-label-halo: rgba(255, 255, 255, 0.92);
+  --map-district-label: rgba(28, 26, 23, 0.55);
+  --map-vignette: rgba(80, 70, 55, 0.09);
+
+  --face-top: 14;
+  --face-left: -4;
+  --face-right: -13;
+  --face-sat-top: -8;
+  --face-sat-right: -4;
+
+  --shadow-sm: 0 1px 2px rgba(38, 32, 22, 0.07);
+  --shadow-md: 0 4px 14px rgba(38, 32, 22, 0.08), 0 1px 2px rgba(38, 32, 22, 0.05);
+  --shadow-lg: 0 18px 44px rgba(38, 32, 22, 0.12), 0 2px 8px rgba(38, 32, 22, 0.06);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}

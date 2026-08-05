@@ -1,0 +1,102 @@
+/**
+ * Behaviour layer for the isometric canvas.
+ *
+ * Geometry and colour are baked into the markup by src/lib/iso/draw.ts. What
+ * lives here is only what has to react: hover, focus and dimming. Keeping it
+ * in CSS means a hover costs one class toggle instead of a redraw.
+ */
+
+.atlas-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.atlas-canvas:active {
+  cursor: grabbing;
+}
+
+/* Only the three lit faces of a building are a hit target. Shadows, beacons
+   and glows must never steal the pointer, or hovering gets mushy. */
+.atlas-shadow,
+.atlas-glow,
+.atlas-beacon,
+.atlas-spark,
+.atlas-crown,
+.atlas-grid,
+.atlas-edges,
+.atlas-labels,
+.atlas-district-labels,
+.atlas-focus,
+.atlas-plates {
+  pointer-events: none;
+}
+
+.atlas-b {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.atlas-b:hover {
+  transform: translate(0, -3px);
+}
+
+.atlas-f {
+  shape-rendering: geometricPrecision;
+}
+
+/* Dependency arcs ---------------------------------------------------------- */
+
+.atlas-edges .atlas-edge {
+  transition:
+    stroke-opacity var(--dur-fast) var(--ease-out),
+    stroke-width var(--dur-fast) var(--ease-out);
+}
+
+.atlas-edges.has-focus .atlas-edge {
+  stroke-opacity: 0.05;
+}
+
+.atlas-edges.has-focus .atlas-edge.is-focus {
+  stroke-opacity: 0.95;
+  stroke-width: 1.8;
+}
+
+/* District spotlight, driven from the legend -------------------------------- */
+
+.atlas-city {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.atlas-city.has-district-focus .atlas-b {
+  opacity: 0.16;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.atlas-city.has-district-focus .atlas-b.is-district-focus {
+  opacity: 1;
+}
+
+/* Text --------------------------------------------------------------------- */
+
+.atlas-labels text,
+.atlas-district-labels text {
+  paint-order: stroke;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-b,
+  .atlas-city,
+  .atlas-city .atlas-b,
+  .atlas-edges .atlas-edge {
+    transition: none;
+  }
+
+  .atlas-b:hover {
+    transform: none;
+  }
+}

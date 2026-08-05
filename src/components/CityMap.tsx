@@ -1,109 +1,206 @@
-import { useEffect, useRef, useState } from 'react';
-import type { AnnotatedLayout } from '../types';
-import { renderCityMap, type CityMapHandle } from '../lib/d3-renderer';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ThemeName } from '../lib/palette';
+import { createIsoRenderer, type Azimuth, type IsoRenderer, type Scene, type SceneNode } from '../lib/iso';
+import { MapControls, type ViewSettings } from './MapControls';
+import { NodeTooltip } from './NodeTooltip';
 
 interface CityMapProps {
-  layout: AnnotatedLayout;
-  onSvgReady?: (svg: SVGSVGElement | null) => void;
+  scene: Scene;
+  theme: ThemeName;
+  azimuth: Azimuth;
+  settings: ViewSettings;
+  selectedId: string | null;
+  focusedDistrict: string | null;
+  onAzimuth: (azimuth: Azimuth) => void;
+  onSettings: (patch: Partial<ViewSettings>) => void;
+  onSelect: (nodeId: string | null) => void;
+  onReady: (renderer: IsoRenderer | null) => void;
 }
 
-export function CityMap({ layout, onSvgReady }: CityMapProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
+export function CityMap({
+  scene,
+  theme,
+  azimuth,
+  settings,
+  selectedId,
+  focusedDistrict,
+  onAzimuth,
+  onSettings,
+  onSelect,
+  onReady,
+}: CityMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const handleRef = useRef<CityMapHandle | null>(null);
-  const [dimensions, setDimensions] = useState({ width: 1200, height: 800 });
+  const svgRef = useRef<SVGSVGElement>(null);
+  const rendererRef = useRef<IsoRenderer | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [hover, setHover] = useState<{ node: SceneNode; at: { x: number; y: number } } | null>(null);
 
-  // Expose SVG element to parent
-  useEffect(() => {
-    if (onSvgReady) {
-      onSvgReady(svgRef.current);
-    }
-  }, [onSvgReady]);
+  // Callbacks live in a ref so the renderer never has to be rebuilt just
+  // because a parent re-rendered with a new closure.
+  const handlers = useRef({ onSelect });
+  handlers.current.onSelect = onSelect;
 
-  // Handle resize
-  useEffect(() => {
-    if (!containerRef.current) return;
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        setDimensions({
-          width: Math.max(width, 800),
-          height: Math.max(height, 600),
-        });
-      }
-    });
-
-    resizeObserver.observe(containerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
+    const measure = (width: number, height: number) => {
+      setSize((current) =>
+        Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1
+          ? current
+          : { width: Math.round(width), height: Math.round(height) },
+      );
     };
+
+    const rect = element.getBoundingClientRect();
+    measure(rect.width, rect.height);
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) measure(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
 
-  // Render D3 visualization
+  // One renderer per canvas. Everything after this is an update, not a rebuild.
   useEffect(() => {
-    if (!svgRef.current || !layout) return;
+    if (!svgRef.current || size.width === 0 || size.height === 0) return;
 
-    try {
-      handleRef.current = renderCityMap(svgRef.current, layout, {
-        width: dimensions.width,
-        height: dimensions.height,
-      });
-    } catch (error) {
-      console.error('Failed to render city map:', error);
-    }
-  }, [layout, dimensions]);
+    const renderer = createIsoRenderer(svgRef.current, {
+      scene,
+      theme,
+      azimuth,
+      showEdges: settings.showEdges,
+      showLabels: settings.showLabels,
+      showGrid: settings.showGrid,
+      width: size.width,
+      height: size.height,
+      onHover: (node, at) => setHover(node && at ? { node, at } : null),
+      onSelect: (node) => handlers.current.onSelect(node?.id ?? null),
+    });
+
+    rendererRef.current = renderer;
+    onReady(renderer);
+
+    return () => {
+      renderer.destroy();
+      rendererRef.current = null;
+      onReady(null);
+    };
+    // Deliberately only re-created when the canvas itself changes size from
+    // zero, or the scene identity changes. Option changes go through update().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, size.width === 0 || size.height === 0]);
+
+  useEffect(() => {
+    rendererRef.current?.update({
+      scene,
+      theme,
+      azimuth,
+      showEdges: settings.showEdges,
+      showLabels: settings.showLabels,
+      showGrid: settings.showGrid,
+      width: size.width,
+      height: size.height,
+    });
+  }, [scene, theme, azimuth, settings.showEdges, settings.showLabels, settings.showGrid, size]);
+
+  useEffect(() => {
+    rendererRef.current?.setSelection(selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    rendererRef.current?.focusDistrict(focusedDistrict);
+  }, [focusedDistrict]);
+
+  const rotate = useCallback(
+    (direction: -1 | 1) => onAzimuth((((azimuth + direction + 4) % 4) as Azimuth)),
+    [azimuth, onAzimuth],
+  );
+
+  // Keyboard shortcuts, ignored while the visitor is typing somewhere.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      switch (event.key) {
+        case '+':
+        case '=':
+          rendererRef.current?.zoomBy(1.45);
+          break;
+        case '-':
+        case '_':
+          rendererRef.current?.zoomBy(1 / 1.45);
+          break;
+        case '0':
+          rendererRef.current?.resetView();
+          break;
+        case '[':
+          rotate(-1);
+          break;
+        case ']':
+          rotate(1);
+          break;
+        case 'e':
+          onSettings({ showEdges: !settings.showEdges });
+          break;
+        case 'l':
+          onSettings({ showLabels: !settings.showLabels });
+          break;
+        case 'g':
+          onSettings({ showGrid: !settings.showGrid });
+          break;
+        case 'Escape':
+          handlers.current.onSelect(null);
+          return;
+        default:
+          return;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [rotate, onSettings, settings.showEdges, settings.showLabels, settings.showGrid]);
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full flex-1 min-h-0 relative bg-slate-950 rounded-lg overflow-hidden border border-slate-800"
-    >
+    <div ref={containerRef} className="bg-inset relative min-h-0 flex-1 overflow-hidden">
       <svg
         ref={svgRef}
-        className="w-full h-full"
-        style={{
-          shapeRendering: 'geometricPrecision',
-        }}
+        className="atlas-canvas"
+        role="application"
+        aria-label="Isometric map of the repository. Drag to pan, scroll to zoom, click a building for details."
       />
 
-      {/* Zoom controls */}
-      <div className="absolute top-4 right-4 flex flex-col gap-1 bg-slate-900/80 backdrop-blur-sm rounded-lg border border-slate-700 shadow-lg p-1 z-10">
-        <button
-          onClick={() => handleRef.current?.zoomIn()}
-          className="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-          aria-label="Zoom in"
-          title="Zoom in"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12m6-6H6" />
-          </svg>
-        </button>
-        <button
-          onClick={() => handleRef.current?.zoomOut()}
-          className="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-          aria-label="Zoom out"
-          title="Zoom out"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 12H6" />
-          </svg>
-        </button>
-        <div className="w-full h-px bg-slate-700 my-0.5" />
-        <button
-          onClick={() => handleRef.current?.reset()}
-          className="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-          aria-label="Reset view"
-          title="Reset view"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h6m-6 0v6m0-6l7 7m9 1v-6m0 6h-6m6 0l-7-7" />
-          </svg>
-        </button>
-      </div>
+      <MapControls
+        azimuth={azimuth}
+        settings={settings}
+        edgeCount={scene.stats.edgeCount}
+        onZoomIn={() => rendererRef.current?.zoomBy(1.45)}
+        onZoomOut={() => rendererRef.current?.zoomBy(1 / 1.45)}
+        onReset={() => rendererRef.current?.resetView()}
+        onRotate={rotate}
+        onSettings={onSettings}
+      />
+
+      <p className="text-tertiary pointer-events-none absolute bottom-3 left-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs">
+        <span>
+          <span className="kbd">drag</span> pan
+        </span>
+        <span>
+          <span className="kbd">scroll</span> zoom
+        </span>
+        <span>
+          <span className="kbd">[</span> <span className="kbd">]</span> rotate
+        </span>
+        <span>
+          <span className="kbd">0</span> fit
+        </span>
+      </p>
+
+      <NodeTooltip node={hover?.node ?? null} at={hover?.at ?? null} theme={theme} />
     </div>
   );
 }
-
-// Made with Bob

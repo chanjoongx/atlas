@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>Atlas</title>
+  <style>
+    .tile{fill:#ffffff}
+    .edge{stroke:#e3dfd7}
+    .plate-t{fill:#3c578a}.plate-l{fill:#3a4d72}.plate-r{fill:#394760}.district-t{fill:#7ba9fe}.district-l{fill:#0f62fe}.district-r{fill:#093d9d}.landmark-t{fill:#dd9b7a}.landmark-l{fill:#c4531a}.landmark-r{fill:#763210}
+    @media (prefers-color-scheme: dark) {
+      .tile{fill:#0e1014}
+      .edge{stroke:#272b33}
+      .plate-t{fill:#193057}.plate-l{fill:#13233e}.plate-r{fill:#0d192d}.district-t{fill:#99beff}.district-l{fill:#4589ff}.district-r{fill:#2b559e}.landmark-t{fill:#ffb784}.landmark-l{fill:#ff832b}.landmark-r{fill:#994f1a}
+    }
+  </style>
+  <rect class="tile" width="32" height="32" rx="7" ry="7"/>
+  <rect class="edge" x="0.5" y="0.5" width="31" height="31" rx="6.5" ry="6.5" fill="none" stroke-width="1"/>
+  <g transform="translate(1.7778 1.7778) scale(0.888889)">
+    <polygon class="plate-l" points="16,12.5 29.5,19.25 29.5,22.25 16,29 2.5,22.25 2.5,19.25"/>
+    <polygon class="plate-t" points="16,12.5 29.5,19.25 16,26 2.5,19.25"/>
+    <polygon class="plate-l" points="2.5,19.25 16,26 16,29 2.5,22.25"/>
+    <polygon class="plate-r" points="16,26 29.5,19.25 29.5,22.25 16,29"/>
+    <polygon class="landmark-l" points="16,3 19.5,4.75 19.5,17.75 16,19.5 12.5,17.75 12.5,4.75"/>
+    <polygon class="landmark-t" points="16,3 19.5,4.75 16,6.5 12.5,4.75"/>
+    <polygon class="landmark-l" points="12.5,4.75 16,6.5 16,19.5 12.5,17.75"/>
+    <polygon class="landmark-r" points="16,6.5 19.5,4.75 19.5,17.75 16,19.5"/>
+    <polygon class="district-l" points="7,11.5 10.5,13.25 10.5,19.25 7,21 3.5,19.25 3.5,13.25"/>
+    <polygon class="district-t" points="7,11.5 10.5,13.25 7,15 3.5,13.25"/>
+    <polygon class="district-l" points="3.5,13.25 7,15 7,21 3.5,19.25"/>
+    <polygon class="district-r" points="7,15 10.5,13.25 10.5,19.25 7,21"/>
+    <polygon class="district-l" points="25,8 28.5,9.75 28.5,19.25 25,21 21.5,19.25 21.5,9.75"/>
+    <polygon class="district-t" points="25,8 28.5,9.75 25,11.5 21.5,9.75"/>
+    <polygon class="district-l" points="21.5,9.75 25,11.5 25,21 21.5,19.25"/>
+    <polygon class="district-r" points="25,11.5 28.5,9.75 28.5,19.25 25,21"/>
+  </g>
+</svg>
