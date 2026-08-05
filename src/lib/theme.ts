@@ -30,11 +30,19 @@ export function resolveTheme(): ThemeName {
 }
 
 function applyTheme(theme: ThemeName): void {
+  const colour = theme === 'carbon' ? '#0b0c0e' : '#faf9f7';
   const root = document.documentElement;
   root.dataset.theme = theme;
-  root
-    .querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', theme === 'carbon' ? '#0b0c0e' : '#faf9f7');
+  root.style.background = colour;
+
+  // index.html ships a media-scoped pair for visitors without scripting. Drop
+  // the media attribute so this tag matches unconditionally, otherwise a light
+  // OS keeps winning through the second tag no matter what the visitor picked.
+  const meta = root.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.removeAttribute('media');
+    meta.setAttribute('content', colour);
+  }
 }
 
 export function useTheme(): {

@@ -20,6 +20,9 @@ interface LegendProps {
 
 export function Legend({ scene, theme, focused, onFocus }: LegendProps) {
   const [showKey, setShowKey] = useState(true);
+  // Hovering a district previews the spotlight; clicking pins it, so the
+  // spotlight survives the pointer leaving the list to go look at the map.
+  const [pinned, setPinned] = useState<string | null>(null);
   const landmarks = SIGNAL_ORDER.filter((kind) => scene.stats.landmarks[kind] > 0);
 
   return (
@@ -88,17 +91,23 @@ export function Legend({ scene, theme, focused, onFocus }: LegendProps) {
           </span>
         </p>
 
-        <ul className="mt-2 space-y-px" onMouseLeave={() => onFocus(null)}>
+        <ul className="mt-2 space-y-px" onMouseLeave={() => onFocus(pinned)}>
           {scene.districts.map((district) => {
             const isFocused = focused === district.name;
+            const isPinned = pinned === district.name;
             return (
               <li key={district.name}>
                 <button
                   type="button"
                   onMouseEnter={() => onFocus(district.name)}
                   onFocus={() => onFocus(district.name)}
-                  onClick={() => onFocus(isFocused ? null : district.name)}
-                  aria-pressed={isFocused}
+                  onBlur={() => onFocus(pinned)}
+                  onClick={() => {
+                    const next = isPinned ? null : district.name;
+                    setPinned(next);
+                    onFocus(next);
+                  }}
+                  aria-pressed={isPinned}
                   className={`hover:bg-surface-hover flex w-full items-center gap-2.5 rounded-sm px-1.5 py-1.5 text-left transition-colors ${
                     isFocused ? 'bg-surface-hover' : ''
                   }`}

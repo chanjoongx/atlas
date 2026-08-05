@@ -1,13 +1,123 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background: #0b0c0e">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Atlas - GitHub Repository Visualizer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+
+    <title>Atlas | Read any codebase as a city</title>
+    <meta
+      name="description"
+      content="Atlas renders any public GitHub repository as an interactive city map. Directories become districts, files become buildings, landmarks show what matters."
+    />
+    <link rel="canonical" href="https://atlas-1q0.pages.dev/" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Without scripting these two follow the OS. The script below takes the
+         first one over as soon as it runs, and a browser uses the first tag
+         whose media matches, so an unconditional first tag always wins. -->
+    <meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#faf9f7" media="(prefers-color-scheme: light)" />
+
+    <!--
+      Resolve the theme before the first paint, so there is no flash of the
+      wrong background. The contract matches src/lib/theme.ts: the key is
+      atlas.theme, the values are carbon and paper, and the OS decides until
+      the visitor states a preference.
+
+      This has to sit after the theme-color tags. Parsing is top down, so from
+      any earlier position the querySelector below finds nothing and silently
+      does nothing.
+    -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('atlas.theme');
+          if (theme !== 'carbon' && theme !== 'paper') {
+            theme =
+              window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches
+                ? 'paper'
+                : 'carbon';
+          }
+          var colour = theme === 'carbon' ? '#0b0c0e' : '#faf9f7';
+          var root = document.documentElement;
+          root.dataset.theme = theme;
+          root.style.background = colour;
+          var meta = root.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            meta.removeAttribute('media');
+            meta.setAttribute('content', colour);
+          }
+        } catch (e) {
+          /* no storage, private mode: carbon is already the default */
+        }
+      })();
+    </script>
+
+    <meta name="application-name" content="Atlas" />
+    <meta name="apple-mobile-web-app-title" content="Atlas" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Atlas" />
+    <meta property="og:title" content="Atlas | Read any codebase as a city" />
+    <meta
+      property="og:description"
+      content="Any GitHub repository, as a city you can read. Districts are directories, buildings are files, landmarks are what matters."
+    />
+    <meta property="og:url" content="https://atlas-1q0.pages.dev/" />
+    <meta property="og:image" content="https://atlas-1q0.pages.dev/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The Atlas wordmark beside an isometric city of coloured districts, with one tall orange landmark tower."
+    />
+    <meta property="og:locale" content="en_US" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Atlas | Read any codebase as a city" />
+    <meta
+      name="twitter:description"
+      content="Any GitHub repository, as a city you can read. Districts are directories, buildings are files, landmarks are what matters."
+    />
+    <meta name="twitter:image" content="https://atlas-1q0.pages.dev/og.png" />
+    <meta
+      name="twitter:image:alt"
+      content="The Atlas wordmark beside an isometric city of coloured districts, with one tall orange landmark tower."
+    />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Atlas",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Any",
+        "url": "https://atlas-1q0.pages.dev/",
+        "description": "Atlas renders any public GitHub repository as an interactive city map. Directories become districts, files become buildings, landmarks show what matters.",
+        "author": {
+          "@type": "Person",
+          "name": "Chanjoong Kim"
+        },
+        "license": "https://opensource.org/licenses/MIT",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      Atlas builds its city maps in the browser, so it needs JavaScript enabled.
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

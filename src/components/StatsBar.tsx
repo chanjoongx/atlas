@@ -28,7 +28,10 @@ export function StatsBar({ stats, theme }: StatsBarProps) {
       </dl>
 
       {shown.length > 0 && (
-        <div className="ml-auto flex min-w-[15rem] flex-1 items-center gap-3">
+        // Below sm this block is dropped entirely rather than shrunk. Its
+        // minimum width is what used to push the whole page into horizontal
+        // overflow on a phone, which shoved the header controls off screen.
+        <div className="ml-auto hidden min-w-[15rem] flex-1 items-center gap-3 sm:flex">
           <div
             className="bg-inset flex h-1.5 flex-1 overflow-hidden rounded-full"
             role="img"

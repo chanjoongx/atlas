@@ -74,6 +74,37 @@ const DISTRICT_FONT = 12;
 /** Deterministic lightness jitter, in HSL percentage points either way. */
 const TEXTURE = 3.5;
 
+/** Canvas below which labels start tapering, and the floor they taper to. */
+const COMFORTABLE_CANVAS = 900;
+const MIN_LABEL_SCALE = 0.74;
+
+/** Screen space rectangle used for label occupancy tests. */
+interface Box {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface LabelDensity {
+  /** Multiplies the constant screen size of every label. */
+  scale: number;
+  /** Ceiling on how many landmark names to draw. */
+  max: number;
+}
+
+function labelDensity(width: number, height: number): LabelDensity {
+  const shorter = Math.min(width, height);
+  const t = Math.min(1, Math.max(0, shorter / COMFORTABLE_CANVAS));
+  return {
+    scale: MIN_LABEL_SCALE + (1 - MIN_LABEL_SCALE) * t,
+    // Roughly one name per ninety thousand square pixels of canvas. A phone
+    // held upright has plenty of area and almost no width, and width is what
+    // a label needs, so the count has to come down with it.
+    max: Math.max(3, Math.min(MAX_LABELS, Math.floor((width * height) / 90_000))),
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Public API                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -117,12 +148,21 @@ export function drawScene(options: DrawOptions): DrawResult {
   parts.push('<g class="atlas-camera">');
   parts.push(`<g class="atlas-fit" transform="translate(${r(fit.x)} ${r(fit.y)}) scale(${r(fit.scale)})">`);
 
+  // Labels hold a constant screen size, which is right until the canvas is a
+  // phone: then a full strength label set covers the city it is annotating.
+  // Both the size and the count taper on a small canvas.
+  const density = labelDensity(width, height);
+
+  const plateNames = districtLabels(districts, theme, tokens, fit.scale, density);
+
   if (options.showGrid) parts.push(grid(scene, azimuth, tokens));
   parts.push(plates(districts, theme));
-  parts.push(districtLabels(districts, theme, tokens, fit.scale));
+  parts.push(plateNames.markup);
   if (options.showEdges && scene.edges.length > 0) parts.push(edges(scene, azimuth, theme));
   parts.push(city(nodes, theme, tokens));
-  if (options.showLabels) parts.push(labels(nodes, tokens, fit.scale));
+  if (options.showLabels) {
+    parts.push(labels(nodes, tokens, fit.scale, density, plateNames.boxes));
+  }
 
   parts.push('</g></g>');
 
@@ -295,22 +335,40 @@ function districtLabels(
   theme: ThemeName,
   tokens: MapTokens,
   fitScale: number,
-): string {
-  const size = DISTRICT_FONT / fitScale;
+  density: LabelDensity,
+): { markup: string; boxes: Box[] } {
+  const size = (DISTRICT_FONT * density.scale) / fitScale;
   const parts: string[] = [
     `<g class="atlas-district-labels" pointer-events="none" font-family="var(--font-sans)" font-size="${r(
       size,
     )}" font-weight="650" letter-spacing="0.1em" text-anchor="middle" paint-order="stroke" stroke="${
       tokens.labelHalo
-    }" stroke-width="${r(3.5 / fitScale)}" stroke-linejoin="round">`,
+    }" stroke-width="${r((3.5 * density.scale) / fitScale)}" stroke-linejoin="round">`,
   ];
 
-  for (const district of districts) {
+  // Labels hold a constant screen size while the city shrinks to fit, so on a
+  // small canvas they crowd. Biggest districts get first refusal, and anything
+  // that would land on top of an already placed name is simply not drawn.
+  const placed: Box[] = [];
+  const byImportance = [...districts].sort((a, b) => b.fileCount - a.fileCount);
+
+  for (const district of byImportance) {
     const near = project(district.rx, district.ry + district.rhy, -PLATE_THICKNESS);
+    const name = district.name.toUpperCase();
+    const halfWidth = (name.length * size * 0.68) / 2 + 4;
+    const box = {
+      x1: near.x - halfWidth,
+      y1: near.y + size * 0.5,
+      x2: near.x + halfWidth,
+      y2: near.y + size * 3,
+    };
+    if (placed.some((other) => overlaps(other, box))) continue;
+    placed.push(box);
+
     const mat = material(district.index, theme, theme === 'carbon' ? 4 : -4);
     parts.push(
       `<text x="${r(near.x)}" y="${r(near.y + size * 1.45)}" fill="${mat.base}">${escapeText(
-        district.name.toUpperCase(),
+        name,
       )}</text>`,
       // `em` so this line follows whatever font-size the group ends up with.
       `<text x="${r(near.x)}" y="${r(
@@ -322,7 +380,7 @@ function districtLabels(
   }
 
   parts.push('</g>');
-  return parts.join('');
+  return { markup: parts.join(''), boxes: placed };
 }
 
 function edges(scene: Scene, azimuth: Azimuth, theme: ThemeName): string {
@@ -435,21 +493,29 @@ function city(nodes: PlacedNode[], theme: ThemeName, tokens: MapTokens): string 
  * then each one is kept only if its box clears everything already placed, so a
  * dense repository degrades into fewer labels instead of a pile of overprints.
  */
-function labels(nodes: PlacedNode[], tokens: MapTokens, fitScale: number): string {
+function labels(
+  nodes: PlacedNode[],
+  tokens: MapTokens,
+  fitScale: number,
+  density: LabelDensity,
+  reserved: Box[],
+): string {
   const candidates = nodes
     .filter((node) => node.signals.length > 0)
     .sort((a, b) => labelWeight(b) - labelWeight(a));
 
   const names = uniqueNames(candidates);
-  const size = LABEL_FONT / fitScale;
-  const placed: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  const size = (LABEL_FONT * density.scale) / fitScale;
+  // District names are already on the canvas and outrank any single file, so
+  // their boxes are occupied before the first landmark is considered.
+  const placed: Box[] = [...reserved];
   const perDistrict = new Map<string, number>();
   const stems: string[] = [];
   const texts: string[] = [];
 
   let used = 0;
   for (const node of candidates) {
-    if (used >= MAX_LABELS) break;
+    if (used >= density.max) break;
     const taken = perDistrict.get(node.districtName) ?? 0;
     if (taken >= MAX_LABELS_PER_DISTRICT) continue;
 
@@ -488,9 +554,9 @@ function labels(nodes: PlacedNode[], tokens: MapTokens, fitScale: number): strin
     size,
   )}" font-weight="600" text-anchor="middle" fill="${tokens.label}" paint-order="stroke" stroke="${
     tokens.labelHalo
-  }" stroke-width="${r(3.25 / fitScale)}" stroke-linejoin="round"><g class="atlas-label-stems" stroke="${
+  }" stroke-width="${r((3.25 * density.scale) / fitScale)}" stroke-linejoin="round"><g class="atlas-label-stems" stroke="${
     tokens.districtLabel
-  }" stroke-width="${r(0.9 / fitScale)}" stroke-opacity="0.5" fill="none" paint-order="normal">${stems.join(
+  }" stroke-width="${r((0.9 * density.scale) / fitScale)}" stroke-opacity="0.5" fill="none" paint-order="normal">${stems.join(
     '',
   )}</g>${texts.join('')}</g>`;
 }
@@ -616,10 +682,7 @@ function clip(text: string): string {
   return `${text.slice(0, MAX_LABEL_CHARS - 1)}…`;
 }
 
-function overlaps(
-  a: { x1: number; y1: number; x2: number; y2: number },
-  b: { x1: number; y1: number; x2: number; y2: number },
-): boolean {
+function overlaps(a: Box, b: Box): boolean {
   return !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
 }
 
