@@ -1,5 +1,6 @@
 import { Boxes, GitBranch, LayoutGrid, ScanSearch } from 'lucide-react';
 import type { ThemeName } from '../lib/palette';
+import { FAQ } from '../lib/faq';
 import type { RepoRef } from '../lib/repo-ref';
 import { DemoRepoCards, RepoInputCompact } from './RepoInput';
 import { SkylineArt } from './SkylineArt';
@@ -110,6 +111,26 @@ export function Landing({ theme, loading, onAnalyze }: LandingProps) {
               </li>
             ))}
           </ol>
+        </div>
+      </section>
+
+      {/*
+        Real answers to real questions, on the page rather than buried in a
+        README. The same array is emitted as FAQPage structured data at build
+        time, which is only legitimate because what a visitor reads here and
+        what a search engine is told are the same words.
+      */}
+      <section className="border-line border-t px-6 py-12">
+        <div className="mx-auto max-w-3xl">
+          <p className="eyebrow">Questions</p>
+          <dl className="mt-5 space-y-6">
+            {FAQ.map((item) => (
+              <div key={item.question}>
+                <dt className="text-primary text-base font-medium">{item.question}</dt>
+                <dd className="text-secondary mt-1.5 text-sm leading-relaxed">{item.answer}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </section>
     </>

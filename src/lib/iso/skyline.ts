@@ -100,6 +100,31 @@ const AMBIENT = -7;
 const DIFFUSE = 9;
 const TOP_BOOST = 13;
 
+/**
+ * Atmospheric perspective.
+ *
+ * Distant buildings lose contrast against the background: that is how eyes read
+ * depth in the real world, and without it a field of identically saturated
+ * blocks reads as a flat pattern no matter how correct the projection is. The
+ * furthest tower gives up this many lightness points toward the canvas, and
+ * this much of its chroma.
+ */
+const HAZE_LIGHTNESS = 11;
+const HAZE_SATURATION = 0.34;
+
+/**
+ * Contact shadow: how far it leans per unit of height, how much it spreads, and
+ * how dark it gets at full height.
+ *
+ * Opacity tracks height rather than being fixed. On this tight lot grid a
+ * constant shadow tiles into a visible dark checkerboard across the plates,
+ * and it is worst during the entrance when most towers are still near zero: a
+ * building with no height casts nothing, which is both correct and the fix.
+ */
+const SHADOW_SKEW = 0.05;
+const SHADOW_SPREAD = 1.06;
+const SHADOW_ALPHA = 0.3;
+
 /* -------------------------------------------------------------------------- */
 
 export interface SkylineHandle {
@@ -192,6 +217,19 @@ export function createSkyline(
     y: view.offsetY + p.y * view.scale,
   });
 
+  /** Footprint diamond of a lot, already in screen space. */
+  function diamondScreen(cx: number, cy: number, half: number, angle: number, z: number): Point[] {
+    return [
+      [cx - half, cy - half],
+      [cx + half, cy - half],
+      [cx + half, cy + half],
+      [cx - half, cy + half],
+    ].map(([x, y]) => {
+      const r = rotateFree(x, y, angle);
+      return toScreen(project(r.x, r.y, z));
+    });
+  }
+
   /* ---------------------------------------------------------------------- */
 
   function heightOf(lot: Lot): number {
@@ -233,6 +271,18 @@ export function createSkyline(
       })
       .sort((a, b) => a.depth - b.depth);
 
+    // One depth range for the whole city, so haze is continuous across district
+    // boundaries rather than restarting inside each plate.
+    let nearest = -Infinity;
+    let furthest = Infinity;
+    for (const lot of lots) {
+      const centre = rotateFree(lot.x, lot.y, angle);
+      const depth = centre.x + centre.y;
+      if (depth > nearest) nearest = depth;
+      if (depth < furthest) furthest = depth;
+    }
+    const span = Math.max(nearest - furthest, 1);
+
     for (const { district } of placed) {
       drawPlate(context, district, angle);
 
@@ -243,7 +293,9 @@ export function createSkyline(
         })
         .sort((a, b) => a.depth - b.depth);
 
-      for (const { lot } of towers) drawTower(context, lot, angle);
+      for (const { lot, depth } of towers) {
+        drawTower(context, lot, angle, (depth - furthest) / span);
+      }
     }
   }
 
@@ -285,10 +337,41 @@ export function createSkyline(
     });
   }
 
-  function drawTower(ctx: CanvasRenderingContext2D, lot: Lot, angle: number): void {
+  /**
+   * @param nearness 0 at the furthest tower in the frame, 1 at the nearest
+   */
+  function drawTower(
+    ctx: CanvasRenderingContext2D,
+    lot: Lot,
+    angle: number,
+    nearness: number,
+  ): void {
     const height = Math.max(0.5, heightOf(lot));
-    const body = districtBody(lot.districtIndex, theme);
     const half = LOT * FOOTPRINT;
+
+    // Haze pulls a distant tower toward the canvas and drains its chroma.
+    const raw = districtBody(lot.districtIndex, theme);
+    const toward = theme === 'carbon' ? -HAZE_LIGHTNESS : HAZE_LIGHTNESS;
+    const haze = 1 - nearness;
+    const body = {
+      h: raw.h,
+      s: raw.s * (1 - HAZE_SATURATION * haze),
+      l: raw.l + toward * haze,
+    };
+
+    // Contact shadow first, leaning further the taller the building. This is
+    // what stops the towers reading as stickers laid on the plate.
+    const lift = Math.min(height / MAX_HEIGHT, 1);
+    if (lift > 0.02) {
+      const skew = height * SHADOW_SKEW;
+      const alpha = SHADOW_ALPHA * lift * (theme === 'carbon' ? 1 : 0.55);
+      ctx.fillStyle =
+        theme === 'carbon' ? `rgba(0,0,0,${alpha.toFixed(3)})` : `rgba(52,44,32,${alpha.toFixed(3)})`;
+      fillPolygon(
+        ctx,
+        diamondScreen(lot.x + skew, lot.y + skew, half * SHADOW_SPREAD, angle, 0.4),
+      );
+    }
 
     paintBox(ctx, lot.x, lot.y, half, half, 0, height, angle, {
       top: lot.landmark
@@ -299,6 +382,10 @@ export function createSkyline(
           ...body,
           l: clamp(body.l + AMBIENT + DIFFUSE * Math.cos(normal - LIGHT_ANGLE), 4, 96),
         }),
+      // A hairline where the roof meets the sky, the way light catches a real
+      // parapet. Cheap, and it is most of what makes the blocks look cut
+      // rather than drawn.
+      rim: hsl({ ...body, s: clamp(body.s - 8, 0, 100), l: clamp(body.l + 26, 0, 98) }, 0.45),
     });
 
     if (!lot.landmark) return;
@@ -340,6 +427,8 @@ export function createSkyline(
     top: string;
     /** Given the outward normal angle of a side face, return its colour. */
     side: (normalAngle: number) => string;
+    /** Hairline drawn around the roof only. */
+    rim?: string;
     stroke?: string;
   }
 
@@ -386,9 +475,9 @@ export function createSkyline(
 
     ctx.fillStyle = paint.top;
     fillPolygon(ctx, hi);
-    if (paint.stroke) {
-      ctx.strokeStyle = paint.stroke;
-      ctx.lineWidth = 1;
+    if (paint.stroke || paint.rim) {
+      ctx.strokeStyle = (paint.stroke ?? paint.rim) as string;
+      ctx.lineWidth = paint.rim && !paint.stroke ? 0.75 : 1;
       ctx.stroke();
     }
   }

@@ -4,6 +4,7 @@ import type { AnnotatedLayout } from './types';
 import { fetchAnnotatedLayout } from './lib/api-client';
 import { buildScene, type Azimuth, type IsoRenderer } from './lib/iso';
 import { formatRepoRef, parseRepoRef, type RepoRef } from './lib/repo-ref';
+import { SITE_ORIGIN } from './lib/site';
 import { useTheme } from './lib/theme';
 import { AtlasLockup, AtlasMark } from './components/Logo';
 import { CityMap } from './components/CityMap';
@@ -95,9 +96,11 @@ export default function App() {
 
   const open = useCallback(
     (target: RepoRef) => {
-      const url = new URL(location.href);
-      url.searchParams.set('repo', formatRepoRef(target));
-      history.pushState(null, '', url);
+      // Written by hand rather than through URLSearchParams, which percent
+      // encodes the slash and turns a link someone might read out loud into
+      // `?repo=honojs%2Fhono`. A slash is legal in a query string, and the
+      // parser accepts either form.
+      history.pushState(null, '', `?repo=${formatRepoRef(target)}`);
       analyze(target);
     },
     [analyze],
@@ -118,6 +121,24 @@ export default function App() {
   const selectedNode = selectedId && scene ? (scene.nodeById.get(selectedId) ?? null) : null;
   const repoLabel = ref ? formatRepoRef(ref) : null;
   const failed = error !== null && error !== undefined;
+
+  /**
+   * Reflect the open repository in the document itself.
+   *
+   * A shared link, a browser tab and a bookmark should all say which city this
+   * is, and a self referencing canonical is what makes each `?repo=` URL
+   * indexable in its own right rather than folding into the root.
+   */
+  useEffect(() => {
+    document.title = repoLabel
+      ? `${repoLabel} as a city | Atlas`
+      : 'Atlas | Read any codebase as a city';
+
+    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (canonical) {
+      canonical.href = repoLabel ? `${SITE_ORIGIN}/?repo=${repoLabel}` : `${SITE_ORIGIN}/`;
+    }
+  }, [repoLabel]);
 
   const patchSettings = useCallback(
     (patch: Partial<ViewSettings>) => setSettings((current) => ({ ...current, ...patch })),
