@@ -369,7 +369,21 @@ function districtLabels(
   for (const district of byImportance) {
     const near = project(district.rx, district.ry + district.rhy, -PLATE_THICKNESS);
     const name = district.name.toUpperCase();
-    const halfWidth = (name.length * size * 0.68) / 2 + 4;
+    const count = `${district.fileCount} files`;
+
+    /*
+     * A label is two lines, and the second one is often the wider.
+     *
+     * Measuring only the name let SRC through with a box a third of its real
+     * width, because "SRC" is three characters and "310 files" is nine. On a
+     * phone, where the city shrinks and the labels do not, BENCHMARKS then
+     * landed directly on top of SRC's count line and the collision test saw
+     * nothing wrong. The name advance also has to include the 0.1em letter
+     * spacing the group sets, which the old 0.68 did not.
+     */
+    const nameHalf = (name.length * size * 0.74) / 2;
+    const countHalf = (count.length * size * 0.484) / 2;
+    const halfWidth = Math.max(nameHalf, countHalf) + 4;
     const box = {
       x1: near.x - halfWidth,
       y1: near.y + size * 0.5,
