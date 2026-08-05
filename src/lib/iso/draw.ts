@@ -442,7 +442,8 @@ function edges(scene: Scene, azimuth: Azimuth, theme: ThemeName): string {
 function city(nodes: PlacedNode[], theme: ThemeName, tokens: MapTokens): string {
   const parts: string[] = ['<g class="atlas-city">'];
 
-  for (const node of nodes) {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
     const mat =
       node.districtName === UNCLASSIFIED
         ? neutralMaterial(theme)
@@ -454,10 +455,13 @@ function city(nodes: PlacedNode[], theme: ThemeName, tokens: MapTokens): string 
     const isHotspot = node.signals.includes('hotspot');
     const flagged = node.signals.length > 0;
 
+    // `--i` is the building's place in the depth order. The stylesheet turns it
+    // into an animation delay, so the entrance sweeps from the back of the city
+    // to the front without a single per element style string.
     parts.push(
       `<g class="atlas-b${flagged ? ' is-landmark' : ''}" data-node="${escapeAttr(
         node.id,
-      )}" data-district="${escapeAttr(node.districtName)}">`,
+      )}" data-district="${escapeAttr(node.districtName)}" style="--i:${index}">`,
     );
 
     // Contact shadow: leans further the taller the building, which is what

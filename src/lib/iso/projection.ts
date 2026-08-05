@@ -50,6 +50,21 @@ export function rotate(x: number, y: number, azimuth: Azimuth): Point {
   }
 }
 
+/**
+ * Rotate a ground point by an arbitrary angle, in radians.
+ *
+ * The map deliberately does not use this: quarter turns keep footprints axis
+ * aligned, which is what makes its depth sort exact and its boxes exactly
+ * three flat quads. The decorative skyline on the landing page turns
+ * continuously, so it pays the extra cost of working out which of a box's four
+ * side faces are pointing at the camera, and gets smooth shading in return.
+ */
+export function rotateFree(x: number, y: number, radians: number): Point {
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return { x: x * cos - y * sin, y: x * sin + y * cos };
+}
+
 /** Half extents swap on odd quarter turns. */
 export function rotateExtent(hx: number, hy: number, azimuth: Azimuth): Point {
   return azimuth % 2 === 1 ? { x: hy, y: hx } : { x: hx, y: hy };

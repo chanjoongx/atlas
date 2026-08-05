@@ -44,6 +44,71 @@
   transform: translate(0, -3px);
 }
 
+/* Entrance ----------------------------------------------------------------- */
+
+/*
+ * The city assembles back to front. `--i` is the building's index in the depth
+ * order, baked into the markup, so the whole sweep costs one custom property
+ * per element and no JavaScript at all once it starts.
+ *
+ * `backwards`, not `both`. A forwards fill would keep the final keyframe
+ * applied for the life of the element, and its `transform: none` would then
+ * outrank the hover rule above, quietly killing the lift on every building
+ * that had ever animated.
+ */
+@keyframes atlas-rise {
+  from {
+    opacity: 0;
+    transform: translate(0, 14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.atlas-city.is-entering .atlas-b {
+  animation: atlas-rise 440ms var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 1.05ms);
+}
+
+/* Ambient ------------------------------------------------------------------ */
+
+/*
+ * Only landmarks move at rest, and only a few dozen of them exist per map.
+ * Animating five hundred buildings would be both unreadable and expensive.
+ */
+@keyframes atlas-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.atlas-beacon,
+.atlas-spark {
+  animation: atlas-breathe 3.4s var(--ease-in-out) infinite;
+  animation-delay: calc(var(--i, 0) * 37ms);
+}
+
+@keyframes atlas-smoulder {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.atlas-glow {
+  animation: atlas-smoulder 5.6s var(--ease-in-out) infinite;
+  animation-delay: calc(var(--i, 0) * 53ms);
+}
+
 .atlas-f {
   shape-rendering: geometricPrecision;
 }
@@ -60,12 +125,27 @@
   stroke-opacity: 0.04;
 }
 
-/* The one state where arcs are meant to shout. Everything else recedes so a
-   single file's dependencies are readable through a dense district. */
+/*
+ * The one state where arcs are meant to shout. Everything else recedes so a
+ * single file's dependencies are readable through a dense district.
+ *
+ * The travelling dash is not decoration. Every arc is drawn from the importing
+ * file toward the file it imports, so the direction the dashes move is the
+ * direction the dependency points, and a hub that everything reaches into
+ * looks different from one that reaches out to everything.
+ */
 .atlas-edges.has-focus .atlas-edge.is-focus {
   stroke: var(--accent);
   stroke-opacity: 1;
   stroke-width: 1.8;
+  stroke-dasharray: 5 9;
+  animation: atlas-flow 780ms linear infinite;
+}
+
+@keyframes atlas-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
 }
 
 /* District spotlight, driven from the legend -------------------------------- */
@@ -101,5 +181,15 @@
 
   .atlas-b:hover {
     transform: none;
+  }
+
+  /* Nothing on the canvas moves on its own. The map is still fully usable:
+     everything here is emphasis, never the only carrier of meaning. */
+  .atlas-city.is-entering .atlas-b,
+  .atlas-beacon,
+  .atlas-spark,
+  .atlas-glow,
+  .atlas-edges.has-focus .atlas-edge.is-focus {
+    animation: none;
   }
 }

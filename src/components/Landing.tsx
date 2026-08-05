@@ -1,7 +1,7 @@
 import { Boxes, GitBranch, LayoutGrid, ScanSearch } from 'lucide-react';
 import type { ThemeName } from '../lib/palette';
 import type { RepoRef } from '../lib/repo-ref';
-import { RepoInput } from './RepoInput';
+import { DemoRepoCards, RepoInputCompact } from './RepoInput';
 import { SkylineArt } from './SkylineArt';
 
 interface LandingProps {
@@ -36,36 +36,53 @@ const PIPELINE = [
 export function Landing({ theme, loading, onAnalyze }: LandingProps) {
   return (
     <>
-      <section className="relative overflow-hidden px-6 pb-4 pt-14 sm:pt-20">
-        <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center text-center">
-          <p className="border-line text-tertiary mb-6 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-2xs">
-            <span className="bg-accent size-1.5 rounded-full" aria-hidden />
-            Second place, IBM Bob Hackathon 2026
-          </p>
+      {/*
+        Two columns above the fold, so the skyline is the first thing a visitor
+        sees rather than something they have to scroll for. It is the product
+        drawing itself with the real projection and the real palette, which is
+        a better argument than any sentence in the column beside it.
+      */}
+      <section className="px-6 pb-2 pt-10 sm:pt-14">
+        <div className="mx-auto grid max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)] lg:gap-10">
+          <div className="flex flex-col">
+            <p className="border-line text-tertiary mb-5 inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1 text-2xs">
+              <span className="bg-accent size-1.5 rounded-full" aria-hidden />
+              Second place, IBM Bob Hackathon 2026
+            </p>
 
-          <h1 className="text-3xl sm:text-4xl">Read any codebase as a city.</h1>
+            <h1 className="text-3xl sm:text-4xl">Read any codebase as a city.</h1>
 
-          <p className="text-secondary mt-4 max-w-xl text-lg">
-            Atlas turns a public GitHub repository into an isometric map. Directories become
-            districts, files become buildings as tall as the code inside them, and the handful of
-            files that actually matter stand out as landmarks.
-          </p>
+            <p className="text-secondary mt-4 max-w-xl text-lg">
+              Atlas turns a public GitHub repository into an isometric map. Directories become
+              districts, files become buildings as tall as the code inside them, and the handful of
+              files that actually matter stand out as landmarks.
+            </p>
 
-          <div className="mt-9 flex w-full justify-center">
-            <RepoInput onAnalyze={onAnalyze} loading={loading} />
+            <div className="mt-7">
+              <RepoInputCompact onAnalyze={onAnalyze} loading={loading} />
+            </div>
+          </div>
+
+          <div
+            className="pointer-events-none order-first select-none lg:order-none"
+            style={{
+              maskImage: 'radial-gradient(120% 110% at 50% 42%, black 58%, transparent 100%)',
+              WebkitMaskImage: 'radial-gradient(120% 110% at 50% 42%, black 58%, transparent 100%)',
+            }}
+          >
+            <SkylineArt
+              theme={theme}
+              className="mx-auto block h-[260px] w-full max-w-lg sm:h-[340px] lg:h-[460px] lg:max-w-none"
+            />
           </div>
         </div>
       </section>
 
-      <div
-        className="pointer-events-none mt-10 select-none overflow-hidden"
-        style={{
-          maskImage: 'linear-gradient(to bottom, black 58%, transparent)',
-          WebkitMaskImage: 'linear-gradient(to bottom, black 58%, transparent)',
-        }}
-      >
-        <SkylineArt theme={theme} className="mx-auto block w-full max-w-4xl opacity-85" />
-      </div>
+      <section className="px-6 pb-12 pt-4">
+        <div className="mx-auto max-w-6xl">
+          <DemoRepoCards onAnalyze={onAnalyze} loading={loading} />
+        </div>
+      </section>
 
       <section className="border-line border-t px-6 py-12">
         <div className="mx-auto max-w-5xl">

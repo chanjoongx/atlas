@@ -13,6 +13,7 @@
 
 import interWoff2 from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
 import type { ThemeName } from './palette';
+import { SITE_HOST } from './site';
 
 export type ExportScale = 1 | 2 | 3;
 
@@ -30,7 +31,7 @@ export interface ExportOptions {
 }
 
 const CAPTION_HEIGHT = 64;
-const SITE = 'atlas-1q0.pages.dev';
+
 
 const CHROME: Record<ThemeName, { bg: string; rule: string; title: string; muted: string }> = {
   carbon: { bg: '#0b0c0e', rule: '#24272e', title: '#e9eaec', muted: '#767d89' },
@@ -91,7 +92,7 @@ export async function buildExportSvg(options: ExportOptions): Promise<string> {
                )}</text>`
              : ''
          }
-         <text x="${width - 28}" y="38" fill="${chrome.muted}" font-size="12.5" text-anchor="end">Mapped with Atlas &#183; ${SITE}</text>
+         <text x="${width - 28}" y="38" fill="${chrome.muted}" font-size="12.5" text-anchor="end">Mapped with Atlas &#183; ${SITE_HOST}</text>
        </g>`
     : '';
 

@@ -91,8 +91,15 @@ export const EXCLUDED_DIRS = [
   'out',
   'coverage',
   '.cache',
+  // Editor and coding agent configuration. Not the project's own code, and a
+  // two file directory of tool settings does not deserve a district on a map
+  // of the software.
   '.vscode',
   '.idea',
+  '.claude',
+  '.cursor',
+  '.devcontainer',
+  '.husky',
   '__pycache__',
   '.pytest_cache',
   'vendor',

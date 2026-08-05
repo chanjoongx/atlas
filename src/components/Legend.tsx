@@ -53,6 +53,14 @@ export function Legend({ scene, theme, focused, onFocus }: LegendProps) {
             <Rule term="Plate" detail="One district, sized to the files it holds.">
               <PlateGlyph theme={theme} />
             </Rule>
+            {scene.stats.edgeCount > 0 && (
+              <Rule
+                term="Arcs"
+                detail="Local imports. Pick a file and they flow toward what it depends on."
+              >
+                <ArcGlyph />
+              </Rule>
+            )}
           </dl>
         )}
       </section>
@@ -196,6 +204,24 @@ function PlateGlyph({ theme }: { theme: ThemeName }) {
       <IsoBlock cx={22} cy={24} half={19} height={3} mat={plate} />
       <IsoBlock cx={15} cy={19} half={4} height={7} mat={block} />
       <IsoBlock cx={28} cy={21} half={4} height={11} mat={block} />
+    </svg>
+  );
+}
+
+function ArcGlyph() {
+  return (
+    <svg width="44" height="30" viewBox="0 0 44 30" role="presentation">
+      <path
+        d="M7 22 Q22 2 37 22"
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth="1.6"
+        strokeDasharray="4 6"
+        strokeLinecap="round"
+      >
+        <animate attributeName="stroke-dashoffset" from="0" to="-10" dur="0.78s" repeatCount="indefinite" />
+      </path>
+      <circle cx="7" cy="22" r="2.2" fill="var(--accent)" />
     </svg>
   );
 }

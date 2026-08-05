@@ -19,6 +19,9 @@ export type { Azimuth } from './projection';
 export type { Scene, SceneNode, SceneStats, SceneDistrict } from './scene';
 export { buildScene } from './scene';
 
+/** Entrance sweep, long enough to cover the last building's delay. */
+const ENTRANCE_MS = 1400;
+
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 12;
 const LABEL_BASE = 11.5;
@@ -72,7 +75,12 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
 
   /* ---------------------------------------------------------------------- */
 
-  function render(): void {
+  /**
+   * `animate` gates the entrance sweep. It belongs to a new city or a new
+   * camera angle, and to nothing else: replaying it on every resize, theme
+   * toggle or slider nudge would turn a flourish into a twitch.
+   */
+  function render(animate = false): void {
     const tokens = readMapTokens(options.theme);
     const result = drawScene({
       scene,
@@ -96,6 +104,16 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
     const fitGroup = svgElement.querySelector('.atlas-fit');
     const focusGroup = svgElement.querySelector('.atlas-focus');
     if (fitGroup && focusGroup) fitGroup.appendChild(focusGroup);
+
+    if (animate) {
+      const city = svgElement.querySelector<SVGGElement>('.atlas-city');
+      if (city) {
+        city.classList.add('is-entering');
+        // The class is dropped once the sweep is over so the next render can
+        // add it again and actually restart the animation.
+        window.setTimeout(() => city.classList.remove('is-entering'), ENTRANCE_MS);
+      }
+    }
 
     applyTransform();
     paintFocus();
@@ -259,6 +277,7 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
 
   function update(next: Partial<IsoOptions>): void {
     const sceneChanged = next.scene !== undefined && next.scene !== options.scene;
+    const azimuthChanged = next.azimuth !== undefined && next.azimuth !== options.azimuth;
     options = { ...options, ...next };
 
     if (sceneChanged) {
@@ -266,7 +285,7 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
       if (selectedId && !scene.nodeById.has(selectedId)) selectedId = null;
       hoveredId = null;
     }
-    render();
+    render(sceneChanged || azimuthChanged);
   }
 
   function exportMarkup(width: number, height: number): string {
@@ -293,7 +312,7 @@ export function createIsoRenderer(svgElement: SVGSVGElement, initial: IsoOptions
     svgElement.innerHTML = '';
   }
 
-  render();
+  render(true);
 
   return {
     update,

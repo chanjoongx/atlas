@@ -38,7 +38,8 @@ interface RepoInputProps {
   loading: boolean;
 }
 
-export function RepoInput({ onAnalyze, loading }: RepoInputProps) {
+/** The field on its own, for layouts that place the demo cards elsewhere. */
+export function RepoInputCompact({ onAnalyze, loading }: RepoInputProps) {
   const [value, setValue] = useState('');
   const parsed = useMemo(() => parseRepoRef(value), [value]);
   const invalid = value.trim().length > 2 && parsed === null;
@@ -49,7 +50,7 @@ export function RepoInput({ onAnalyze, loading }: RepoInputProps) {
   };
 
   return (
-    <div className="w-full max-w-2xl">
+    <div className="w-full max-w-xl">
       <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row">
         <div className="flex-1">
           <label htmlFor="repo" className="sr-only">
@@ -96,28 +97,40 @@ export function RepoInput({ onAnalyze, loading }: RepoInputProps) {
         )}
       </p>
 
-      <div className="mt-7">
-        <p className="eyebrow flex items-center gap-1.5">
-          <Zap size={11} aria-hidden />
-          Prebuilt, opens instantly
-        </p>
-        <ul className="mt-2.5 grid gap-2 sm:grid-cols-3">
-          {DEMO_REPOS.map((demo) => (
-            <li key={demo.name}>
-              <button
-                type="button"
-                onClick={() => onAnalyze(demo)}
-                disabled={loading}
-                className="surface hover:border-line-strong hover:bg-surface-hover group flex h-full w-full flex-col gap-1 p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <span className="text-primary text-sm font-medium">{demo.name}</span>
-                <span className="text-tertiary text-2xs">{demo.blurb}</span>
-                <span className="text-secondary mt-1.5 text-2xs leading-snug">{demo.takeaway}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+    </div>
+  );
+}
+
+/**
+ * The three prebuilt maps.
+ *
+ * Each card says what its city looks like rather than what the project does,
+ * because the point of a demo here is to show that different kinds of software
+ * produce visibly different shapes.
+ */
+export function DemoRepoCards({ onAnalyze, loading }: RepoInputProps) {
+  return (
+    <div>
+      <p className="eyebrow flex items-center gap-1.5">
+        <Zap size={11} aria-hidden />
+        Prebuilt, opens instantly
+      </p>
+      <ul className="mt-2.5 grid gap-2 sm:grid-cols-3">
+        {DEMO_REPOS.map((demo) => (
+          <li key={demo.name}>
+            <button
+              type="button"
+              onClick={() => onAnalyze(demo)}
+              disabled={loading}
+              className="surface hover:border-line-strong hover:bg-surface-hover flex h-full w-full flex-col gap-1 p-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="text-primary text-sm font-medium">{demo.name}</span>
+              <span className="text-tertiary text-2xs">{demo.blurb}</span>
+              <span className="text-secondary mt-1.5 text-2xs leading-snug">{demo.takeaway}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
