@@ -46,7 +46,7 @@ Pick a building and the map answers a different question: what does this file to
 <div align="center">
   <img alt="A file selected in Atlas, its dependency arcs highlighted and its imports listed in a side panel" src="docs/focus-dark.webp" width="900">
   <br>
-  <sub><code>src/types.ts</code> in Hono, imported by 53 files. Every arc runs from the importing file toward what it imports, so the flow shows you the direction.</sub>
+  <sub><code>src/context.ts</code> in Hono, imported by 71 files. Every arc runs from the importing file toward what it imports, so the flow shows you the direction.</sub>
 </div>
 
 ---
