@@ -271,7 +271,7 @@ ${urls
 
 Live: ${SITE_ORIGIN}
 Source: https://github.com/chanjoongx/atlas
-Author: Chanjoong Kim
+Author: Chanjoong Kim (https://chanjoongx.com)
 
 ## What it does
 
